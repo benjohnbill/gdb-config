@@ -973,7 +973,7 @@ This mirrors "delete display", so either half of the pair works:
 # window one third of the terminal, whatever the number says. Measured on
 # gdb 17.1 with weights 1, 3, 6 and 12, all four give the same height:
 #   64-row terminal -> 21   48 -> 16   36 -> 12   24 -> 8
-# winheight is the only way past that, and the layouts in ~/.gdbinit want
+# winheight is the only way past that, and the layouts in ~/.config/gdb/gdbinit want
 # exactly the third gdb already gives, so the "vars" command no longer calls
 # it. The fraction below is what a bare "cmdwin" resets to; "cmdwin ROWS"
 # still takes any height the terminal will accept.
@@ -1051,7 +1051,7 @@ No argument gives the "vars" layout: a source window just tall enough to
 show the arrow, and the rest split between tracked expressions and the
 command window. "vars src" gives the "src-vars" layout, where the source
 window is the large one, for reading code inside gdb rather than in the
-editor. Both layouts are defined in ~/.gdbinit."""
+editor. Both layouts are defined in ~/.config/gdb/gdbinit."""
 
     _LAYOUTS = {"": "vars", "src": "src-vars"}
 

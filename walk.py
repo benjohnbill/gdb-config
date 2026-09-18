@@ -57,7 +57,7 @@ def _payload(node, follow_field):
         if field.name == follow_field:
             continue
         try:
-            # "set print pretty on" in ~/.gdbinit breaks a nested struct over
+            # "set print pretty on" in ~/.config/gdb/gdbinit breaks a nested struct over
             # several lines, which would split one node across four rows.
             text = node[field.name].format_string(pretty_structs=False)
         except gdb.error as err:
