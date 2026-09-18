@@ -61,6 +61,7 @@ import chase
 _exprs = []      # the expressions, in the order they were added
 _labels = {}     # expression -> what the window calls it
 _groups = {}     # expression -> the "walk EXPR" whose expansion put it here
+_pinned_groups = set()   # the groups whose rows were rewritten to addresses
 _previous = {}   # values as of the stop before last
 _last = {}       # values as of the most recent stop
 _good = {}       # the last value that was readable at all
@@ -481,15 +482,17 @@ def _fit(groups, room):
             sum(1 for _, c in cut if c))
 
 
-def _tail_note(span, changed):
+def _tail_note(span, changed, stale):
     """The single line that stands for a run of rows a chain no longer reaches.
 
     Written in the note register rather than the row register, because it is
-    not a value: it is the window saying it declined to repeat itself. The
-    change mark still applies. A chain losing its tail is exactly the kind of
-    movement this window exists to catch, and collapsing the rows must not
-    collapse the news."""
-    mark = "*" if changed else " "
+    not a value: it is the window saying it declined to repeat itself. It
+    carries the same mark a row would, for the same reasons. A chain losing
+    its tail is the kind of movement this window exists to catch, so
+    collapsing the rows must not collapse the news; and a reading kept from
+    an earlier stop is not current fact, so the note may not claim to be one
+    while the rows above it admit they are not."""
+    mark = "*" if changed else ("?" if stale else " ")
     return ("%s%s  %s %s%s: the chain does not reach here%s"
             % (_MARK if changed else _DIM, mark, _OFF, _DIM, span, _OFF))
 
@@ -500,7 +503,7 @@ def _dead_tails(readings, live):
     A chain row's expression is the row above it with one more "->field", so a
     row that cannot be read guarantees nothing below it in that group can be
     read either. Left alone they report the same break once per row, and the
-    window is short.
+    window is a third of a terminal.
 
     The run is counted from the end backwards, so a readable row is never
     hidden even when something above it fails for a reason of its own.
@@ -509,32 +512,49 @@ def _dead_tails(readings, live):
     below is a sibling at least as often as a child, so the same rule there
     would hide rows that are perfectly alive.
 
-    Returns ({first expression: (changed, span)}, {expressions to skip})."""
+    A run of one is left alone. Collapsing it would save no height at all,
+    and it would cost the row number the window is read for and the reason
+    gdb gave for the failure. Losing only the last node is the commonest way
+    a list shrinks, so that case has to stay a row.
+
+    A group added with "-l" is left alone too. Pinning rewrites every row to
+    its own absolute address, so the rows stop being one chain and the reason
+    above no longer holds: each failure is its own finding about its own
+    object, and "the chain does not reach here" would not be what happened.
+
+    Returns ({first expression: (changed, stale, span)},
+             {expressions the note stands for})."""
     notes = {}
-    hidden = set()
+    undrawn = set()
     for group in {g for g in _groups.values() if g.split(" ", 1)[0] == "walk"}:
-        members = [e for e in _exprs if _groups.get(e) == group]
+        if group in _pinned_groups:
+            continue
+        members = _group_members(group)
         run = []
         for expr in reversed(members):
-            value = readings.get(expr, ("", False))[0]
+            value = readings[expr][0]
             # Out of scope is not a break in the chain. _read_stable already
             # answers that one by keeping the last reading, and it takes a
             # whole group at once rather than its tail.
             if not _is_error(value) or _is_invisible(value):
                 break
             run.append(expr)
-        if not run:
+        if len(run) < 2:
             continue
         run.reverse()
+        # Read exactly as a row reads itself, so the note cannot say "moved"
+        # where the rows it replaced would have said "not current".
+        stale = any(readings[e][1] for e in run)
         changed = live and any(
-            _previous.get(e) is not None and _previous.get(e) != readings[e][0]
+            (not readings[e][1])
+            and _previous.get(e) is not None
+            and _previous.get(e) != readings[e][0]
             for e in run)
-        first = _labels.get(run[0], run[0])
-        last = _labels.get(run[-1], run[-1])
-        notes[run[0]] = (changed, first if len(run) == 1
-                         else "%s to %s" % (first, last))
-        hidden.update(run[1:])
-    return notes, hidden
+        notes[run[0]] = (changed, stale,
+                         "%s to %s" % (_labels.get(run[0], run[0]),
+                                       _labels.get(run[-1], run[-1])))
+        undrawn.update(run[1:])
+    return notes, undrawn
 
 
 def _room(height, banner_rows):
@@ -600,15 +620,18 @@ class VarWindow:
             readings = {expr: (_last.get(expr, ""), False) for expr in _exprs}
         else:
             readings = {expr: _read_stable(expr) for expr in _exprs}
-        notes, hidden = _dead_tails(readings, live=not depth)
+        # Not "hidden": _fit below binds that name to a row count, and the
+        # two would be one name for two things inside one function.
+        notes, undrawn = _dead_tails(readings, live=not depth)
         groups = []
         for i, expr in enumerate(_exprs, 1):
-            if expr in hidden:
+            if expr in undrawn:
                 continue
             if expr in notes:
-                note_changed, span = notes[expr]
+                note_changed, note_stale, span = notes[expr]
                 groups.append((note_changed,
-                               [(_tail_note(span, note_changed), note_changed)]))
+                               [(_tail_note(span, note_changed, note_stale),
+                                 note_changed)]))
                 continue
             name = _labels.get(expr, expr).ljust(namew)
             value, stale = readings[expr]
@@ -754,6 +777,7 @@ def _group_members(group):
 
 
 def _drop_group(group):
+    _pinned_groups.discard(group)
     for expr in _group_members(group):
         _exprs.remove(expr)
         _forget(expr)
@@ -878,6 +902,10 @@ def _track_group(tokens):
         _groups[expression] = group
         _last[expression] = _previous[expression] = _read_stable(expression)[0]
         position += 1
+    # Recorded, not inferred from the rows: a pinned row is an address like
+    # any other expression, and the collapse has to know the difference.
+    if pin:
+        _pinned_groups.add(group)
     _redraw()
 
 
@@ -1014,6 +1042,7 @@ def _clear():
         _forget(expr)
     _exprs.clear()
     _groups.clear()
+    _pinned_groups.clear()
     _redraw()
 
 

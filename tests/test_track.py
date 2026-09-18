@@ -1,6 +1,7 @@
 """track walk / track deep: the guards, the group key, and removal."""
 
 import os
+import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -48,6 +49,7 @@ def reset(height=20):
     varwin._exprs.clear()
     varwin._labels.clear()
     varwin._groups.clear()
+    varwin._pinned_groups.clear()
     varwin._previous.clear()
     varwin._last.clear()
     varwin._good.clear()
@@ -277,7 +279,8 @@ check("cut chain: the line names the range it stands for",
 # still holds a dead row, and that one is meant to keep showing its error.
 check("cut chain: no chain row still shows a raw memory error",
       [line for line in cut.splitlines()
-       if "shrink[" in line and "Cannot access memory" in line], [])
+       if re.search(r"shrink\[\d\] +=", line)
+       and "Cannot access memory" in line], [])
 check("cut chain: the collapse is marked as a change",
       varwin._MARK in note[0] if note else False, True)
 check("cut chain: the rows are still tracked, only undrawn",
@@ -286,5 +289,48 @@ check("cut chain: the rows are still tracked, only undrawn",
 # deep lays its rows out breadth first, so "below" is not "downstream".
 check("deep is left alone: its dead row is still drawn",
       "root.left.left" in cut, True)
+
+
+# ── what the collapse must refuse to do ──────────────────────────────────
+# These drive _dead_tails directly with made-up readings. The rules they hold
+# are about which runs qualify, and building a real program state for each
+# one would test the fixture rather than the rule.
+
+DEAD = "<Cannot access memory at address 0x0>"
+chain = [e for e in varwin._exprs if varwin._groups.get(e) == "walk shrink"]
+
+alive = {e: ("{...}", False) for e in varwin._exprs}
+
+one_dead = dict(alive)
+one_dead[chain[-1]] = (DEAD, False)
+notes, undrawn = varwin._dead_tails(one_dead, live=True)
+check("one dead row keeps its own line: nothing collapses", notes, {})
+check("one dead row keeps its own line: nothing is hidden", undrawn, set())
+
+two_dead = dict(alive)
+two_dead[chain[-1]] = (DEAD, False)
+two_dead[chain[-2]] = (DEAD, False)
+notes, undrawn = varwin._dead_tails(two_dead, live=True)
+check("two dead rows do collapse", len(notes), 1)
+
+# A stale reading is last-stop news, and the row path marks it "?" rather
+# than "*". The note has to say the same thing.
+stale = dict(alive)
+for e in chain[-3:]:
+    stale[e] = (DEAD, True)
+notes, _ = varwin._dead_tails(stale, live=True)
+check("a stale run is not called a change",
+      list(notes.values())[0][0] if notes else None, False)
+check("a stale run says it is stale",
+      list(notes.values())[0][1] if notes else None, True)
+
+# "-l" rewrites every row to its own absolute address, so the rows stop being
+# one chain and the collapse has nothing true to say about them.
+reset()
+run("track walk -l shrink 4")
+pinned = {e: (DEAD, False) for e in varwin._exprs}
+notes, undrawn = varwin._dead_tails(pinned, live=True)
+check("a pinned group is never collapsed", notes, {})
+check("a pinned group hides nothing", undrawn, set())
 
 harness.report("track")
