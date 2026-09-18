@@ -481,6 +481,62 @@ def _fit(groups, room):
             sum(1 for _, c in cut if c))
 
 
+def _tail_note(span, changed):
+    """The single line that stands for a run of rows a chain no longer reaches.
+
+    Written in the note register rather than the row register, because it is
+    not a value: it is the window saying it declined to repeat itself. The
+    change mark still applies. A chain losing its tail is exactly the kind of
+    movement this window exists to catch, and collapsing the rows must not
+    collapse the news."""
+    mark = "*" if changed else " "
+    return ("%s%s  %s %s%s: the chain does not reach here%s"
+            % (_MARK if changed else _DIM, mark, _OFF, _DIM, span, _OFF))
+
+
+def _dead_tails(readings, live):
+    """Runs of rows a chain no longer reaches, and the note each one becomes.
+
+    A chain row's expression is the row above it with one more "->field", so a
+    row that cannot be read guarantees nothing below it in that group can be
+    read either. Left alone they report the same break once per row, and the
+    window is short.
+
+    The run is counted from the end backwards, so a readable row is never
+    hidden even when something above it fails for a reason of its own.
+
+    Chain groups only. deep() lays its rows out breadth first, where the row
+    below is a sibling at least as often as a child, so the same rule there
+    would hide rows that are perfectly alive.
+
+    Returns ({first expression: (changed, span)}, {expressions to skip})."""
+    notes = {}
+    hidden = set()
+    for group in {g for g in _groups.values() if g.split(" ", 1)[0] == "walk"}:
+        members = [e for e in _exprs if _groups.get(e) == group]
+        run = []
+        for expr in reversed(members):
+            value = readings.get(expr, ("", False))[0]
+            # Out of scope is not a break in the chain. _read_stable already
+            # answers that one by keeping the last reading, and it takes a
+            # whole group at once rather than its tail.
+            if not _is_error(value) or _is_invisible(value):
+                break
+            run.append(expr)
+        if not run:
+            continue
+        run.reverse()
+        changed = live and any(
+            _previous.get(e) is not None and _previous.get(e) != readings[e][0]
+            for e in run)
+        first = _labels.get(run[0], run[0])
+        last = _labels.get(run[-1], run[-1])
+        notes[run[0]] = (changed, first if len(run) == 1
+                         else "%s to %s" % (first, last))
+        hidden.update(run[1:])
+    return notes, hidden
+
+
 def _room(height, banner_rows):
     """The rows left for the tracked expressions themselves.
 
@@ -533,19 +589,33 @@ class VarWindow:
         namew = max((len(n) for n in names), default=0)
         namew = min(namew, max(8, width // 3))
         depth = _selected_depth()
+        # Every row is read once, before any of them is drawn. The collapse
+        # below has to know what a whole group says before it can tell which
+        # of its rows still deserve a line.
+        #
+        # Another frame selected means the expressions belong to the innermost
+        # one, so re-reading them here would report them missing and mark that
+        # as a change. The last reading is shown instead, and nothing moved.
+        if depth:
+            readings = {expr: (_last.get(expr, ""), False) for expr in _exprs}
+        else:
+            readings = {expr: _read_stable(expr) for expr in _exprs}
+        notes, hidden = _dead_tails(readings, live=not depth)
         groups = []
         for i, expr in enumerate(_exprs, 1):
+            if expr in hidden:
+                continue
+            if expr in notes:
+                note_changed, span = notes[expr]
+                groups.append((note_changed,
+                               [(_tail_note(span, note_changed), note_changed)]))
+                continue
             name = _labels.get(expr, expr).ljust(namew)
+            value, stale = readings[expr]
             if depth:
-                # Another frame is selected. The expressions belong to the
-                # innermost one, so re-reading them here would report them
-                # missing and mark that as a change. Show the last reading
-                # instead, and say nothing moved.
-                value = _last.get(expr, "")
                 groups.append((False, _row_lines(i, name, expr, None,
                                                  value, False, width)))
                 continue
-            value, stale = _read_stable(expr)
             before = _previous.get(expr)
             changed = (not stale) and before is not None and before != value
             groups.append((changed, _row_lines(i, name, expr, before,

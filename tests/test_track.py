@@ -244,4 +244,47 @@ run("untrack walk head")
 check("untracking the group leaves the hand-added row alone",
       varwin._exprs, ["*(head)"])
 
+
+# ── a chain that shrinks under the window ────────────────────────────────
+# Once a chain row cannot be read, every row below it in that group reports
+# the same break, once each. They collapse into one line. The rule is taken
+# from the end backwards and applies to chain groups only, so a live row is
+# never hidden and deep's breadth-first rows are left alone.
+
+reset(height=None)
+recorder = RecordingWin(40)
+varwin.VarWindow(recorder)
+run("track walk shrink 5")
+run("track deep root 3")
+varwin._window.render()
+whole = "".join(recorder.chunks)
+check("whole chain: all five rows are drawn",
+      all(("shrink[%d]" % i) in whole for i in range(5)), True)
+check("whole chain: nothing is collapsed yet",
+      "does not reach" in whole, False)
+
+run("continue")                        # the fixture cuts the list to two
+varwin._window.render()
+cut = "".join(recorder.chunks)
+note = [line for line in cut.splitlines() if "does not reach" in line]
+
+check("cut chain: the rows the chain still reaches stay",
+      "shrink[0]" in cut and "shrink[1]" in cut, True)
+check("cut chain: the dead run becomes one line", len(note), 1)
+check("cut chain: the line names the range it stands for",
+      "shrink[2] to shrink[4]" in note[0] if note else False, True)
+# Scoped to the chain's own rows on purpose: the deep group in this window
+# still holds a dead row, and that one is meant to keep showing its error.
+check("cut chain: no chain row still shows a raw memory error",
+      [line for line in cut.splitlines()
+       if "shrink[" in line and "Cannot access memory" in line], [])
+check("cut chain: the collapse is marked as a change",
+      varwin._MARK in note[0] if note else False, True)
+check("cut chain: the rows are still tracked, only undrawn",
+      len([e for e in varwin._exprs if varwin._groups.get(e) == "walk shrink"]), 5)
+
+# deep lays its rows out breadth first, so "below" is not "downstream".
+check("deep is left alone: its dead row is still drawn",
+      "root.left.left" in cut, True)
+
 harness.report("track")
