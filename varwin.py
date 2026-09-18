@@ -14,6 +14,21 @@ Commands follow gdb's own shape, where "display" is the closest relative:
     delete track    remove every expression    (compare: delete display)
     vars            switch to the layout that shows the window
 
+A whole structure goes in with one command, and comes back out with one:
+
+    track walk EXPR DEPTH [FIELD]   the first DEPTH nodes of a chain
+    track deep EXPR DEPTH           EXPR and what it reaches, DEPTH levels
+    untrack walk EXPR               remove what "track walk EXPR" added
+    untrack deep EXPR               remove what "track deep EXPR" added
+
+Both add one row per struct rather than one per member, because a struct that
+did not move folds to "= {...}" while the one that did opens up and shows
+which member moved. A row per member would spend the window's height on the
+quiet ones and hide the answer. Both refuse to run when the window is closed,
+since that is where the rows go and where their budget comes from. "-l" works
+here too: "track walk -l EXPR DEPTH" pins the nodes at the addresses they hold
+right now, which is what you want when a node is about to leave the list.
+
 A row whose value moved since the previous stop carries "*" in the first
 column and shows "old -> new". A multi-line value (a struct under "set print
 pretty on") is compared member by member, and a memory row such as
@@ -30,11 +45,22 @@ at that moment, so it keeps reporting the same object from any frame.
 """
 
 import os
+import sys
 
 import gdb
 
+# gdb runs this file with "source", which does not put its directory on the
+# import path. chase.py holds the traversal that "track walk" and the "walk"
+# command both need, so make it importable before asking for it.
+_HERE = os.path.dirname(os.path.abspath(__file__))
+if _HERE not in sys.path:
+    sys.path.insert(0, _HERE)
+
+import chase
+
 _exprs = []      # the expressions, in the order they were added
 _labels = {}     # expression -> what the window calls it
+_groups = {}     # expression -> the "walk EXPR" whose expansion put it here
 _previous = {}   # values as of the stop before last
 _last = {}       # values as of the most recent stop
 _good = {}       # the last value that was readable at all
@@ -591,6 +617,7 @@ def _forget(expr):
     _last.pop(expr, None)
     _good.pop(expr, None)
     _labels.pop(expr, None)
+    _groups.pop(expr, None)
 
 
 def _pinned(expr):
@@ -605,6 +632,144 @@ def _pinned(expr):
         raise gdb.GdbError(
             "track -l needs something that lives in memory: %s does not" % expr)
     return "*(%s)%#x" % (value.type.pointer(), int(value.address))
+
+
+# "track walk EXPR DEPTH" and "track deep EXPR DEPTH" put a whole structure
+# on the board at once. Both are expansions: they turn one expression into the
+# expressions for everything it reaches, and the window then re-reads those at
+# every stop the way it re-reads a hand-typed one. So nothing here has to run
+# again when the program moves.
+#
+# An expansion owns its rows. The name of the command that made them is the
+# group, which is what lets "untrack walk s" take back exactly what
+# "track walk s" put in, and what makes a second run replace rather than
+# double.
+_GROUP_MODES = ("walk", "deep")
+
+
+def _available_rows():
+    """How many more rows the window can take.
+
+    render() gives its last line to the footer, so the usable height is one
+    less. The number counts folded rows: a struct that changes opens up and
+    takes more, and _fit() is what handles that. This is therefore a guard
+    against an absurd request, not an exact limit."""
+    room = max(1, _window.win.height - 1)
+    return room - len(_exprs)
+
+
+def _group_members(group):
+    return [expr for expr in _exprs if _groups.get(expr) == group]
+
+
+def _drop_group(group):
+    for expr in _group_members(group):
+        _exprs.remove(expr)
+        _forget(expr)
+
+
+def _expand(mode, name, expr, depth, field, limit):
+    """The (expression, label) pairs for one expansion.
+
+    The two chain refusals are rewritten here rather than in chase, because
+    only this layer knows that the other command exists and that the field
+    goes after the depth."""
+    try:
+        if mode == "walk":
+            return chase.chain(expr, depth, field, cmd=name)
+        return chase.deep(expr, depth, cmd=name, limit=limit)
+    except chase.NoChainField as err:
+        raise gdb.GdbError(
+            '%s: %s has no field that points to %s. '
+            'Use "tk deep" for this type.'
+            % (name, err.type_name, err.type_name))
+    except chase.AmbiguousChainField as err:
+        raise gdb.GdbError(
+            "%s: %s has %d fields that could be followed: %s. "
+            "Name one: %s EXPR DEPTH FIELD"
+            % (name, err.type_name, len(err.candidates),
+               ", ".join(err.candidates), name))
+
+
+def _track_group(tokens):
+    """track walk|deep [-l] EXPR DEPTH [FIELD]"""
+    mode = tokens[0]
+    name = "tk %s" % mode
+    rest = tokens[1:]
+    pin = rest[0] in ("-l", "-location")
+    if pin:
+        rest = rest[1:]
+
+    # The window is where the rows go and where the budget comes from. Adding
+    # to a window that is not there would be a silent no-op at best.
+    if _window is None:
+        raise gdb.GdbError(
+            '%s: the vars window is not open. Run "vars" first.' % name)
+    usage = "Usage: %s EXPR DEPTH" % name
+    if len(rest) < 2:
+        raise gdb.GdbError("%s: give a depth. %s" % (name, usage))
+    if mode == "deep" and len(rest) > 2:
+        raise gdb.GdbError(
+            "%s: deep follows every pointer, so it takes no field. %s"
+            % (name, usage))
+    if len(rest) > 3:
+        raise gdb.GdbError("%s: too many arguments. %s [FIELD]" % (name, usage))
+
+    expr, depth_text = rest[0], rest[1]
+    field = rest[2] if len(rest) > 2 else None
+    try:
+        depth = int(depth_text)
+    except ValueError:
+        raise gdb.GdbError(
+            "%s: depth must be a positive integer, not %r." % (name, depth_text))
+    if depth < 1:
+        raise gdb.GdbError("%s: depth must be a positive integer." % name)
+
+    group = "%s %s" % (mode, expr)
+    # A repeat replaces, so the rows this group already owns are its own to
+    # spend again.
+    available = _available_rows() + len(_group_members(group))
+    if available < 1:
+        raise gdb.GdbError(
+            "%s: the vars window is full. Remove rows with utk first." % name)
+    # walk counts nodes, so its depth is its row count and can be judged
+    # before any memory is read. deep counts levels, and a branching type
+    # turns a small depth into a large result, so it can only be measured
+    # after the fact.
+    if mode == "walk" and depth > available:
+        raise gdb.GdbError(
+            "%s: depth %d is too large. "
+            "The vars window has room for %d more rows."
+            % (name, depth, available))
+
+    entries = _expand(mode, name, expr, depth, field, available)
+    # Pinning is done here and not in the loop below, because _pinned() can
+    # refuse a value that has no address. Doing it after the old rows were
+    # dropped would leave the window holding half a group.
+    if pin:
+        entries = [(_pinned(expression), "@" + label)
+                   for expression, label in entries]
+    if len(entries) > available:
+        # The count is "more than" rather than exact: deep stops expanding
+        # once the answer cannot fit, so the true total may be far larger.
+        raise gdb.GdbError(
+            "%s: this expands to more than %d rows. "
+            "The vars window has room for %d. Try a smaller depth."
+            % (name, available, available))
+
+    # Every refusal is above this line, so a rejected expansion leaves the
+    # window exactly as it was instead of half filled.
+    _drop_group(group)
+    for expression, label in entries:
+        if expression not in _exprs:
+            _exprs.append(expression)
+            _last[expression] = _previous[expression] = _read_stable(expression)[0]
+        # A row that was already there by hand joins the group, so that one
+        # "untrack walk s" still leaves the window in a state the user can
+        # predict.
+        _labels[expression] = label
+        _groups[expression] = group
+    _redraw()
 
 
 class TrackCommand(gdb.Command):
@@ -628,6 +793,14 @@ address it referred to, so it survives leaving the frame. Compare
 
     def invoke(self, arg, from_tty):
         arg = arg.strip()
+        # "walk" and "deep" are also ordinary variable names, so a single
+        # token stays an expression: only "track walk EXPR ..." is the
+        # subcommand. This is the same bargain the "print"/"p" guard below
+        # already makes.
+        tokens = arg.split()
+        if len(tokens) >= 2 and tokens[0] in _GROUP_MODES:
+            _track_group(tokens)
+            return
         pin = False
         for flag in ("-location", "-l"):
             if arg == flag or arg.startswith(flag + " "):
@@ -700,6 +873,18 @@ class UntrackCommand(gdb.Command):
         if not arg:
             _clear()
             return
+        # "untrack walk s" takes back exactly what "track walk s" put in.
+        # Row numbers cannot do this: an expansion of twelve rows would need
+        # twelve numbers, and they shift as soon as one is removed.
+        tokens = arg.split()
+        if len(tokens) == 2 and tokens[0] in _GROUP_MODES:
+            group = " ".join(tokens)
+            if not _group_members(group):
+                raise gdb.GdbError(
+                    'untrack: no group named "%s". see: info track' % group)
+            _drop_group(group)
+            _redraw()
+            return
         for token in arg.split():
             try:
                 index = int(token) - 1
@@ -719,6 +904,7 @@ def _clear():
     for expr in list(_exprs):
         _forget(expr)
     _exprs.clear()
+    _groups.clear()
     _redraw()
 
 
