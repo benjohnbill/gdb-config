@@ -14,9 +14,7 @@ harness.start()
 check, raises = harness.check, harness.check_raises
 
 
-def labels(entries):
-    return [label for _, label in entries]
-
+labels = harness.labels
 
 check("deep: a struct start is used as written",
       chase.deep("s", 1),
@@ -39,11 +37,11 @@ check("deep: a vtable shared by two widgets is expanded once",
        "s.items[0].vtbl", "s.items[2].vtbl"])
 
 check("deep: the char array is not expanded into elements",
-      [l for l in labels(chase.deep("s", 4)) if "label" in l],
+      [name for name in labels(chase.deep("s", 4)) if "label" in name],
       [])
 
 check("deep: an int member makes no entry",
-      [l for l in labels(chase.deep("s", 4)) if l.endswith(".id")],
+      [name for name in labels(chase.deep("s", 4)) if name.endswith(".id")],
       [])
 
 # The whole point of the exercise: the vtable pointer is on the board.

@@ -11,7 +11,14 @@ import harness
 import varwin
 
 harness.start()
-check, raises = harness.check, harness.check_raises
+check = harness.check
+
+
+def raises(name, fragment, fn, *args):
+    """Every refusal in this file arrives through gdb.execute(), which turns a
+    GdbError into a plain gdb.error. The class therefore carries no signal
+    here and only the leak marker does, so the class check is waived."""
+    harness.check_raises(name, fragment, fn, *args, clean=False)
 
 
 class FakeWin:
@@ -61,13 +68,13 @@ check("closed window: nothing was added", varwin._exprs, [])
 
 # ── the depth argument ───────────────────────────────────────────────────
 reset()
-raises("no depth: usage is shown", "Usage: tk walk EXPR DEPTH",
+raises("no depth: usage is shown", "usage: tk walk EXPR DEPTH",
        run, "track walk head")
 raises("bad depth: a word is refused", "positive integer",
        run, "track walk head two")
 raises("bad depth: zero is refused", "positive integer",
        run, "track walk head 0")
-raises("no depth: deep shows its own usage", "Usage: tk deep EXPR DEPTH",
+raises("no depth: deep shows its own usage", "usage: tk deep EXPR DEPTH",
        run, "track deep root")
 
 # ── the row budget ───────────────────────────────────────────────────────
@@ -79,7 +86,7 @@ raises("walk: the message names the real room", "room for 19 more rows",
 check("walk: the refusal added nothing", varwin._exprs, [])
 
 reset(height=4)                        # room = 3 rows, the tree needs 4
-raises("deep: a branching type overruns the budget", "expands to",
+raises("deep: a branching type overruns the budget", "expands past",
        run, "track deep root 9")
 check("deep: the refusal added nothing", varwin._exprs, [])
 
@@ -125,7 +132,7 @@ check("re-running replaces rather than duplicates",
 
 # ── a type with no chain is sent to the other command ────────────────────
 reset()
-raises("walk on a chainless struct points at deep", 'Use "tk deep"',
+raises("walk on a chainless struct points at deep", 'use "tk deep"',
        run, "track walk plain 3")
 raises("walk on a branching type asks for a field", "left, right",
        run, "track walk root 3")
@@ -177,11 +184,7 @@ class RecordingWin(FakeWin):
         self.chunks.append(text)
 
 
-for name in ("_exprs",):
-    getattr(varwin, name).clear()
-for name in ("_labels", "_groups", "_previous", "_last", "_good"):
-    getattr(varwin, name).clear()
-
+reset(height=None)                     # clears every dict, drops the window
 recorder = RecordingWin(30)
 varwin.VarWindow(recorder)             # registers itself as varwin._window
 
@@ -209,5 +212,36 @@ raises("track walk: a bad expression is a message, not an exception",
 raises("track deep: a bad expression is a message, not an exception",
        "No symbol", run, "track deep no_such_name_here 3")
 check("a bad expression added nothing", varwin._exprs, [])
+
+# ── the budget has to agree with what render() actually leaves ───────────
+# render() spends a row on the "reading frame ^N" banner whenever a frame
+# other than the innermost is selected. The budget once forgot that and was
+# a row too generous in exactly that case.
+reset(height=20)
+check("budget: the innermost frame has the whole room",
+      varwin._available_rows(), 19)
+run("up")
+check("budget: an outer frame pays for its banner",
+      varwin._available_rows(), 18)
+run("down")
+
+# ── a repeat goes back where the old one stood ───────────────────────────
+reset()
+run("track walk head 2")
+run("track scalar")
+run("track walk head 3")
+check("a replaced group keeps its place in the list",
+      [varwin._labels.get(e, e) for e in varwin._exprs],
+      ["head[0]", "head[1]", "head[2]", "scalar"])
+
+# ── a row added by hand is not swallowed by a group ──────────────────────
+reset()
+run("track *(head)")                   # the very text an expansion produces
+run("track walk head 2")
+check("the hand-added row was not relabelled",
+      varwin._labels.get("*(head)"), None)
+run("untrack walk head")
+check("untracking the group leaves the hand-added row alone",
+      varwin._exprs, ["*(head)"])
 
 harness.report("track")

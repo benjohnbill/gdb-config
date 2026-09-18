@@ -16,22 +16,48 @@ def check(name, got, want):
         _failed.append("%s\n       got:  %r\n       want: %r" % (name, got, want))
 
 
-def check_raises(name, fragment, fn, *args, **kwargs):
-    """The call must fail, and its message must contain fragment."""
+# What gdb.execute() does to an error, measured on gdb 17.1:
+#   a command that raises GdbError  -> gdb.error("a tidy refusal")
+#   a gdb.error that escapes invoke -> gdb.error("Error occurred in Python: ...")
+# So through execute() every failure arrives as gdb.error and the marker is
+# the only thing that tells the two apart. A direct call keeps the classes
+# distinct instead. Both readings are checked, because an earlier version of
+# this file accepted either class and that is exactly how an unevaluatable
+# expression reached a real session.
+_LEAK = "Error occurred in Python"
+
+
+def check_raises(name, fragment, fn, *args, clean=True, **kwargs):
+    """The call must fail with a message a user can act on.
+
+    clean=False for a call made through gdb.execute(), which flattens every
+    command error to gdb.error and leaves only the marker to go on."""
     try:
         fn(*args, **kwargs)
     except (gdb.error, gdb.GdbError) as err:
-        if fragment in str(err):
+        text = str(err)
+        if _LEAK in text:
+            _failed.append("%s\n       a Python exception escaped the command:"
+                           "\n       %r" % (name, text))
+        elif clean and not isinstance(err, gdb.GdbError):
+            _failed.append("%s\n       raised %s, not GdbError: %r"
+                           % (name, type(err).__name__, text))
+        elif fragment in text:
             _passed.append(name)
         else:
             _failed.append("%s\n       message: %r\n       wanted:  %r"
-                           % (name, str(err), fragment))
+                           % (name, text, fragment))
         return
     _failed.append("%s\n       no error raised, expected one about %r"
                    % (name, fragment))
 
 
-def start(binary_note=""):
+def labels(entries):
+    """Just the display names of an expansion, for a readable assertion."""
+    return [label for _, label in entries]
+
+
+def start():
     """Run the fixture up to its "ready" function."""
     gdb.execute("set confirm off")
     gdb.execute("set pagination off")

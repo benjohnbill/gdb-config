@@ -27,11 +27,6 @@ import re
 
 import gdb
 
-__all__ = ["chain", "deep", "node_type", "named_fields", "points_at",
-           "self_pointer_fields", "choose_field",
-           "ChaseError", "NoChainField", "AmbiguousChainField", "NotAStruct"]
-
-
 class ChaseError(gdb.GdbError):
     """Anything this module refuses to do."""
 
@@ -73,7 +68,7 @@ _STRUCTS = (gdb.TYPE_CODE_STRUCT, gdb.TYPE_CODE_UNION)
 _DEFAULT_LIMIT = 4096
 
 
-def _atom(expr):
+def _as_operand(expr):
     """EXPR wrapped in parentheses unless it is already a single name.
 
     "head" stays "head" so the common case reads well; "*pp" becomes "(*pp)"
@@ -81,7 +76,7 @@ def _atom(expr):
     return expr if _IDENT.match(expr) else "(%s)" % expr
 
 
-def _evaluate(expr, cmd):
+def evaluate(expr, cmd):
     """EXPR's value, with a bad expression reported rather than raised.
 
     gdb.parse_and_eval raises gdb.error, which is not a GdbError. Letting one
@@ -151,15 +146,16 @@ def node_type(value, cmd="walk"):
         target = stripped.target().strip_typedefs()
         if target.code not in _STRUCTS:
             raise NotAStruct(
-                "%s needs a pointer to a struct. this points to %s"
+                "%s: needs a pointer to a struct. this points to %s"
                 % (cmd, target))
         return target, value
     if stripped.code in _STRUCTS:
         if value.address is None:
-            raise NotAStruct("%s needs a struct that has an address" % cmd)
+            raise NotAStruct("%s: needs a struct that has an address" % cmd)
         return stripped, value.address
     raise NotAStruct(
-        "%s needs a struct or a pointer to one. this is %s" % (cmd, value.type))
+        "%s: needs a struct or a pointer to one. this is %s"
+        % (cmd, value.type))
 
 
 def choose_field(struct_type, requested, cmd="walk", name=None):
@@ -172,16 +168,16 @@ def choose_field(struct_type, requested, cmd="walk", name=None):
         by_name = {f.name: f for f in named_fields(struct_type)}
         if requested not in by_name:
             raise ChaseError(
-                "%s has no field '%s'. fields: %s"
-                % (name, requested, ", ".join(by_name)))
+                "%s: %s has no field '%s'. fields: %s"
+                % (cmd, name, requested, ", ".join(by_name)))
         # Being a pointer is not enough. A field pointing at some other
         # struct, or a void *, would follow one node and then fail deep
         # inside the loop where the error is far from its cause.
         if not points_at(by_name[requested], struct_type):
             raise ChaseError(
-                "'%s' does not point at %s, so %s cannot follow it. "
+                "%s: '%s' does not point at %s, so it cannot be followed. "
                 "candidates: %s"
-                % (requested, name, cmd,
+                % (cmd, requested, name,
                    ", ".join(self_pointer_fields(struct_type)) or "none"))
         return requested
 
@@ -190,11 +186,12 @@ def choose_field(struct_type, requested, cmd="walk", name=None):
         return candidates[0]
     if not candidates:
         raise NoChainField(
-            "no field of %s points at %s. name the field: %s EXPR FIELD"
-            % (name, name, cmd), name)
+            "%s: no field of %s points at %s. name the field: %s EXPR FIELD"
+            % (cmd, name, name, cmd), name)
     raise AmbiguousChainField(
-        "%s has %d fields that could be followed: %s. name one: %s EXPR FIELD"
-        % (name, len(candidates), ", ".join(candidates), cmd),
+        "%s: %s has %d fields that could be followed: %s. "
+        "name one: %s EXPR FIELD"
+        % (cmd, name, len(candidates), ", ".join(candidates), cmd),
         name, candidates)
 
 
@@ -207,17 +204,17 @@ def chain(expr, depth, field=None, cmd="walk"):
     that cannot be read, so a broken list produces the part that is sound
     instead of an error."""
     _require_depth(depth, cmd)
-    value = _evaluate(expr, cmd)
+    value = evaluate(expr, cmd)
     struct_type, pointer = node_type(value, cmd)
     follow = choose_field(struct_type, field, cmd, type_display_name(value))
 
     stripped = value.type.strip_typedefs()
     if stripped.code == gdb.TYPE_CODE_PTR:
-        ptr_expr = _atom(expr)
+        ptr_expr = _as_operand(expr)
     else:
         # "&" binds looser than "->", so the parentheses here are what keeps
         # "(&x)->next" from becoming "&(x->next)" one step later.
-        ptr_expr = "(&%s)" % _atom(expr)
+        ptr_expr = "(&%s)" % _as_operand(expr)
 
     out = []
     seen = set()
@@ -288,19 +285,19 @@ def deep(expr, depth, cmd="deep", limit=None):
     _require_depth(depth, cmd)
     if limit is None:
         limit = _DEFAULT_LIMIT
-    value = _evaluate(expr, cmd)
+    value = evaluate(expr, cmd)
     stripped = value.type.strip_typedefs()
 
     if stripped.code == gdb.TYPE_CODE_PTR:
         node_type(value, cmd)           # raises if it points at a non-struct
-        root_expr = "*(%s)" % _atom(expr)
+        root_expr = "*(%s)" % _as_operand(expr)
         root_value = value.dereference()
     elif stripped.code in _STRUCTS:
         root_expr = expr
         root_value = value
     else:
         raise NotAStruct(
-            "%s needs a struct or a pointer to one. this is %s"
+            "%s: needs a struct or a pointer to one. this is %s"
             % (cmd, value.type))
 
     out = [(root_expr, expr)]

@@ -11,7 +11,13 @@ import harness
 import walk                 # noqa: F401  (registers the command)
 
 harness.start()
-check, raises = harness.check, harness.check_raises
+check = harness.check
+
+
+def raises(name, fragment, fn, *args):
+    """These refusals arrive through gdb.execute(), which turns a GdbError
+    into a plain gdb.error, so only the leak marker distinguishes them."""
+    harness.check_raises(name, fragment, fn, *args, clean=False)
 
 
 def out(command):

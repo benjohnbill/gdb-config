@@ -481,6 +481,20 @@ def _fit(groups, room):
             sum(1 for _, c in cut if c))
 
 
+def _room(height, banner_rows):
+    """The rows left for the tracked expressions themselves.
+
+    The last line belongs to the footer, and a frame other than the innermost
+    adds a banner above the rows. render() and the budget that "track walk"
+    spends both read this, because two copies of the arithmetic drifted apart
+    once already: the budget was one row too generous in exactly the case the
+    banner covers."""
+    room = max(1, height - 1)
+    if banner_rows:
+        room = max(1, room - banner_rows)
+    return room
+
+
 def _selected_depth():
     """How many frames up the selected frame sits, or 0 when it is innermost.
 
@@ -543,12 +557,11 @@ class VarWindow:
             for text, line_changed in logical:
                 rows.extend((piece, line_changed) for piece in _wrap(text, width))
             physical.append((changed, rows))
-        room = max(1, height - 1)   # the last line belongs to the footer
         head = []
         if depth:
             head = ["%s reading frame ^%d: values are from the last stop%s"
                     % (_DIM, depth, _OFF)]
-            room = max(1, room - 1)
+        room = _room(height, len(head))
         lines, hidden, hidden_changed = _fit(physical, room)
         if not lines:
             lines = ["%s nothing tracked yet%s" % (_DIM, _OFF)]
@@ -562,7 +575,7 @@ class VarWindow:
             lines.append("%s%s%s" % (_DIM, note, _OFF))
         lines = head + lines
         room += len(head)
-        footer = ("%s track <expr>   untrack N   delete track   "
+        footer = ("%s track <expr>   tk walk|deep EXPR N   untrack N   "
               "* moved   ? not visible here%s" % (_DIM, _OFF))
         for line in lines:
             self.win.write(_clip(line, width) + "\n")
@@ -650,12 +663,20 @@ _GROUP_MODES = ("walk", "deep")
 def _available_rows():
     """How many more rows the window can take.
 
-    render() gives its last line to the footer, so the usable height is one
-    less. The number counts folded rows: a struct that changes opens up and
-    takes more, and _fit() is what handles that. This is therefore a guard
-    against an absurd request, not an exact limit."""
-    room = max(1, _window.win.height - 1)
-    return room - len(_exprs)
+    The number counts folded rows: a struct that changes opens up and takes
+    more, and _fit() is what handles that. So this is a guard against an
+    absurd request, not an exact limit."""
+    return _room(_window.win.height,
+                 1 if _selected_depth() else 0) - len(_exprs)
+
+
+def _group_key(mode, expr):
+    """The name an expansion answers to, for both halves of its life.
+
+    Built in one place because "track walk s" and "untrack walk s" have to
+    arrive at the same string or the second cannot find what the first
+    added."""
+    return "%s %s" % (mode, expr)
 
 
 def _group_members(group):
@@ -681,18 +702,25 @@ def _expand(mode, name, expr, depth, field, limit):
     except chase.NoChainField as err:
         raise gdb.GdbError(
             '%s: %s has no field that points to %s. '
-            'Use "tk deep" for this type.'
+            'use "tk deep" for this type.'
             % (name, err.type_name, err.type_name))
     except chase.AmbiguousChainField as err:
         raise gdb.GdbError(
             "%s: %s has %d fields that could be followed: %s. "
-            "Name one: %s EXPR DEPTH FIELD"
+            "name one: %s EXPR DEPTH FIELD"
             % (name, err.type_name, len(err.candidates),
                ", ".join(err.candidates), name))
 
 
 def _track_group(tokens):
-    """track walk|deep [-l] EXPR DEPTH [FIELD]"""
+    """Put a whole chain or a whole structure in the window at once.
+
+        track walk|deep [-l] EXPR DEPTH [FIELD]
+
+    The refusals are ordered so that the reason a user hears is the first
+    thing actually wrong, and every one of them happens before a single row
+    is touched. An expansion that cannot fit therefore leaves the window
+    exactly as it was rather than half filled."""
     mode = tokens[0]
     name = "tk %s" % mode
     rest = tokens[1:]
@@ -704,8 +732,8 @@ def _track_group(tokens):
     # to a window that is not there would be a silent no-op at best.
     if _window is None:
         raise gdb.GdbError(
-            '%s: the vars window is not open. Run "vars" first.' % name)
-    usage = "Usage: %s EXPR DEPTH" % name
+            '%s: the vars window is not open. run "vars" first.' % name)
+    usage = "usage: %s EXPR DEPTH" % name
     if len(rest) < 2:
         raise gdb.GdbError("%s: give a depth. %s" % (name, usage))
     if mode == "deep" and len(rest) > 2:
@@ -724,14 +752,19 @@ def _track_group(tokens):
             "%s: depth must be a positive integer, not %r." % (name, depth_text))
     if depth < 1:
         raise gdb.GdbError("%s: depth must be a positive integer." % name)
+    # Evaluated before the budget is weighed, so that a misspelt name is
+    # reported as a misspelt name rather than as a depth that does not fit.
+    chase.evaluate(expr, name)
 
-    group = "%s %s" % (mode, expr)
+    group = _group_key(mode, expr)
+    existing = _group_members(group)
     # A repeat replaces, so the rows this group already owns are its own to
     # spend again.
-    available = _available_rows() + len(_group_members(group))
+    available = _available_rows() + len(existing)
     if available < 1:
         raise gdb.GdbError(
-            "%s: the vars window is full. Remove rows with utk first." % name)
+            "%s: the vars window is full. remove rows first. see: info track"
+            % name)
     # walk counts nodes, so its depth is its row count and can be judged
     # before any memory is read. deep counts levels, and a branching type
     # turns a small depth into a large result, so it can only be measured
@@ -739,7 +772,7 @@ def _track_group(tokens):
     if mode == "walk" and depth > available:
         raise gdb.GdbError(
             "%s: depth %d is too large. "
-            "The vars window has room for %d more rows."
+            "the vars window has room for %d more rows."
             % (name, depth, available))
 
     entries = _expand(mode, name, expr, depth, field, available)
@@ -750,25 +783,31 @@ def _track_group(tokens):
         entries = [(_pinned(expression), "@" + label)
                    for expression, label in entries]
     if len(entries) > available:
-        # The count is "more than" rather than exact: deep stops expanding
-        # once the answer cannot fit, so the true total may be far larger.
+        # Not an exact count: deep stops expanding as soon as the answer
+        # cannot fit, so the true total may be far larger than this.
         raise gdb.GdbError(
-            "%s: this expands to more than %d rows. "
-            "The vars window has room for %d. Try a smaller depth."
-            % (name, available, available))
+            "%s: this expands past the %d rows the vars window has left. "
+            "try a smaller depth." % (name, available))
 
     # Every refusal is above this line, so a rejected expansion leaves the
     # window exactly as it was instead of half filled.
+    #
+    # A repeat goes back where the old one stood. Dropping and appending
+    # would shuffle the group past every row added since, and a list read
+    # top to bottom is the whole reason these rows are ordered at all.
+    position = _exprs.index(existing[0]) if existing else len(_exprs)
     _drop_group(group)
     for expression, label in entries:
-        if expression not in _exprs:
-            _exprs.append(expression)
-            _last[expression] = _previous[expression] = _read_stable(expression)[0]
-        # A row that was already there by hand joins the group, so that one
-        # "untrack walk s" still leaves the window in a state the user can
-        # predict.
+        # A row the user added by hand keeps its own name and its own fate.
+        # Adopting it would mean "untrack walk s" deleted something "track
+        # walk s" never created.
+        if expression in _exprs:
+            continue
+        _exprs.insert(position, expression)
         _labels[expression] = label
         _groups[expression] = group
+        _last[expression] = _previous[expression] = _read_stable(expression)[0]
+        position += 1
     _redraw()
 
 
@@ -878,7 +917,7 @@ class UntrackCommand(gdb.Command):
         # twelve numbers, and they shift as soon as one is removed.
         tokens = arg.split()
         if len(tokens) == 2 and tokens[0] in _GROUP_MODES:
-            group = " ".join(tokens)
+            group = _group_key(*tokens)
             if not _group_members(group):
                 raise gdb.GdbError(
                     'untrack: no group named "%s". see: info track' % group)
@@ -999,7 +1038,8 @@ so a short terminal gets a shorter command window instead of a warning."""
         except ValueError:
             raise gdb.GdbError("cmdwin takes a number of rows. see: help cmdwin")
         if _fit_cmd_window(wanted) is None and from_tty:
-            print("터미널이 낮아서 명령 창 높이는 그대로 둔다.")
+            print("terminal too short to divide; "
+                  "the command window keeps its height")
 
 
 class VarsLayoutCommand(gdb.Command):

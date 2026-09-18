@@ -14,9 +14,7 @@ harness.start()
 check, raises = harness.check, harness.check_raises
 
 
-def labels(entries):
-    return [label for _, label in entries]
-
+labels = harness.labels
 
 check("deep: a pointer start is dereferenced once",
       chase.deep("root", 1),
@@ -67,11 +65,5 @@ check("deep: a limit above the real size changes nothing",
 
 raises("deep: an unknown name is reported, not raised", "No symbol",
        chase.deep, "no_such_name_here", 3)
-
-try:
-    chase.deep("no_such_name_here", 3)
-except gdb.GdbError as err:
-    harness.check("deep: the refusal is a GdbError",
-                  isinstance(err, gdb.GdbError), True)
 
 harness.report("deep/tree")

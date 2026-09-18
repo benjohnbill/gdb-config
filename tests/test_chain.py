@@ -66,10 +66,4 @@ raises("chain: a scalar is refused", "struct or a pointer",
 raises("chain: an unknown name is reported, not raised", "No symbol",
        chase.chain, "no_such_name_here", 3)
 
-try:
-    chase.chain("no_such_name_here", 3)
-except gdb.GdbError as err:
-    harness.check("chain: the refusal is a GdbError",
-                  isinstance(err, gdb.GdbError), True)
-
 harness.report("chain")
