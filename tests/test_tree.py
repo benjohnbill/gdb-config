@@ -65,4 +65,13 @@ check("deep: a limit above the real size changes nothing",
       labels(chase.deep("root", 9, limit=100)),
       ["root", "root.left", "root.right", "root.left.left"])
 
+raises("deep: an unknown name is reported, not raised", "No symbol",
+       chase.deep, "no_such_name_here", 3)
+
+try:
+    chase.deep("no_such_name_here", 3)
+except gdb.GdbError as err:
+    harness.check("deep: the refusal is a GdbError",
+                  isinstance(err, gdb.GdbError), True)
+
 harness.report("deep/tree")

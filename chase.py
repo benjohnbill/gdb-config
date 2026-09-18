@@ -81,6 +81,19 @@ def _atom(expr):
     return expr if _IDENT.match(expr) else "(%s)" % expr
 
 
+def _evaluate(expr, cmd):
+    """EXPR's value, with a bad expression reported rather than raised.
+
+    gdb.parse_and_eval raises gdb.error, which is not a GdbError. Letting one
+    escape a command prints "Python Exception <class 'gdb.error'>" and, inside
+    a define, stops every command after it. walk.py learned this before the
+    traversal moved here, so the guard had to move with it."""
+    try:
+        return gdb.parse_and_eval(expr)
+    except gdb.error as err:
+        raise ChaseError("%s: %s" % (cmd, err))
+
+
 def _require_depth(depth, cmd):
     if not isinstance(depth, int) or isinstance(depth, bool) or depth < 1:
         raise ChaseError("%s: depth must be at least 1" % cmd)
@@ -194,7 +207,7 @@ def chain(expr, depth, field=None, cmd="walk"):
     that cannot be read, so a broken list produces the part that is sound
     instead of an error."""
     _require_depth(depth, cmd)
-    value = gdb.parse_and_eval(expr)
+    value = _evaluate(expr, cmd)
     struct_type, pointer = node_type(value, cmd)
     follow = choose_field(struct_type, field, cmd, type_display_name(value))
 
@@ -275,7 +288,7 @@ def deep(expr, depth, cmd="deep", limit=None):
     _require_depth(depth, cmd)
     if limit is None:
         limit = _DEFAULT_LIMIT
-    value = gdb.parse_and_eval(expr)
+    value = _evaluate(expr, cmd)
     stripped = value.type.strip_typedefs()
 
     if stripped.code == gdb.TYPE_CODE_PTR:

@@ -61,4 +61,15 @@ raises("chain: a struct with no self pointer is refused", "no field",
 raises("chain: a scalar is refused", "struct or a pointer",
        chase.chain, "scalar", 5)
 
+# gdb.parse_and_eval raises gdb.error, which is not a GdbError: letting one
+# out prints "Python Exception" instead of a message a user can act on.
+raises("chain: an unknown name is reported, not raised", "No symbol",
+       chase.chain, "no_such_name_here", 3)
+
+try:
+    chase.chain("no_such_name_here", 3)
+except gdb.GdbError as err:
+    harness.check("chain: the refusal is a GdbError",
+                  isinstance(err, gdb.GdbError), True)
+
 harness.report("chain")

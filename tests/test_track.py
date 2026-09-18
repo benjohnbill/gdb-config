@@ -203,4 +203,11 @@ check("second stop: the untouched node is still there",
 check("second stop: the rows kept their labels",
       all(("head[%d]" % i) in second for i in range(3)), True)
 
+reset()
+raises("track walk: a bad expression is a message, not an exception",
+       "No symbol", run, "track walk no_such_name_here 3")
+raises("track deep: a bad expression is a message, not an exception",
+       "No symbol", run, "track deep no_such_name_here 3")
+check("a bad expression added nothing", varwin._exprs, [])
+
 harness.report("track")
