@@ -1,0 +1,12 @@
+# gdb's own command history, mode 600 and none of anyone's business
+history
+__pycache__/
+*.pyc
+
+# The hand-kept snapshots this directory has always carried
+*.bak-*
+*.superseded-*
+
+# Compiled test fixtures, rebuilt by tests/run.sh
+tests/fixtures/chains
+tests/fixtures/widgets
