@@ -116,6 +116,13 @@ source ~/.config/gdb/varwin.py
 # scrolls the command window away or breaks the screen. The "out" command
 # it defines opens the layout below.
 #
+# The import is what starts the collecting, not the window: gdb reads
+# "inferior-tty" only as it launches the program, so a window opened later
+# could never see a run that was already under way. The layout is therefore
+# a view that can be opened at any point in a run. The program reads from
+# that terminal too, so "out send TEXT" types into it and "out off" hands
+# the keyboard back; see the docstring in outwin.py.
+#
 # Imported rather than sourced. "source x.py" runs the file in gdb's own
 # __main__, which every sourced script shares, and outwin needs the same
 # helper names varwin already uses there (_wrap, _clip, _window, _redraw ...).

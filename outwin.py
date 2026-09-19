@@ -12,6 +12,32 @@ output alone.
 
     out             program output, tracked expressions, commands
     focus out       then PageUp / PageDown walk back through the output
+    out send TEXT   type a line into the running program
+    out off / on    give the program's terminal back, and take it again
+
+The pty is opened when this file is imported, not when the window appears,
+and it stays open for the whole session. Two reasons, both learned the hard
+way.
+
+"set inferior-tty" is read once, when gdb launches the program, and never
+again: gdb wires the child's stdin, stdout and stderr to that terminal at
+exec time. Opening the window later cannot reach a process that is already
+running, so the output of that run was gone before the window existed --
+"out" after a dozen "next" steps showed an empty board. Capturing from the
+start makes the window a view onto a buffer that is always being filled, so
+it can be opened at any point in a run and still show everything printed so
+far.
+
+Closing the pty while the program holds the other end hangs it up, and the
+program takes a SIGHUP. gdb destroys a window when the layout stops using it,
+so "out" then "vars" used to kill the process being debugged. Nothing closes
+the pty now while a program is alive.
+
+The cost is stdin. "set inferior-tty" replaces the whole terminal, not just
+the output half, so a program that reads from the keyboard no longer hears
+it: those keystrokes belong to gdb. "out send TEXT" writes a line into that
+terminal instead, and "out off" gives the real one back for a session spent
+typing at the program rather than reading it.
 
 A pty rather than a pipe or a file, because a pty is a terminal: the C library
 keeps stdout line-buffered on it, as it does on the real one. Redirecting to a
@@ -42,9 +68,18 @@ import gdb
 
 _MAX_LINES = 5000     # how far back "focus out" + PageUp can reach
 
+# With no window on screen the output still has to reach the user somehow.
+# A short burst is simply printed in the command window, the way it arrived
+# there before this file existed; a long one would scroll that window away,
+# which is the problem the window was written to solve, so it is announced
+# in one line instead.
+_ECHO_MAX = 20
+
 _lines = collections.deque(maxlen=_MAX_LINES)
 _partial = ""         # bytes since the last newline: a line still being written
 _lock = threading.Lock()
+_total = 0            # lines ever collected; _lines forgets, this does not
+_echoed = 0           # how many of those the command window has already shown
 
 _window = None
 _master = None
@@ -116,7 +151,7 @@ def _reader(master):
     gdb is blocked waiting for that same program. Nothing here calls into gdb,
     whose Python API is not thread-safe -- the thread only reads a file
     descriptor and appends text. Drawing stays on gdb's own thread."""
-    global _partial
+    global _partial, _total
     pending = ""
     while True:
         try:
@@ -130,7 +165,17 @@ def _reader(master):
             *done, pending = pending.split("\n")
             with _lock:
                 _lines.extend(done)
+                _total += len(done)
         _partial = pending
+
+
+def _alive():
+    """True while a program being debugged has a process of its own."""
+    try:
+        inferior = gdb.selected_inferior()
+    except gdb.error:
+        return False
+    return bool(inferior and inferior.pid)
 
 
 def _set_winsize(width, height):
@@ -179,6 +224,9 @@ def _open():
                  "command window" % err)
         return
     _master, _slave, _saved_tty = master, slave, saved
+    # A window will refine this on its first render. Until then the program
+    # would otherwise ask its terminal for a width and be told zero.
+    _set_winsize(gdb.parameter("width") or 80, gdb.parameter("height") or 24)
     _thread = threading.Thread(target=_reader, args=(master,), daemon=True)
     _thread.start()
 
@@ -187,9 +235,13 @@ def _close():
     """Give the terminal back, then drop the pty.
 
     Closing the master is also how the reader thread is stopped: its read()
-    fails and it returns."""
+    fails and it returns.
+
+    It also hangs up the other end, and the program holding it takes a
+    SIGHUP, so a live process is left alone here. Only "out off" reaches this
+    function now, and it refuses while a program is running."""
     global _master, _slave, _thread, _winsize
-    if _master is None:
+    if _master is None or _alive():
         return
     try:
         gdb.execute("set inferior-tty %s" % _saved_tty, to_string=True)
@@ -204,9 +256,11 @@ def _close():
 
 
 def _clear():
-    global _partial
+    global _partial, _total, _echoed
     with _lock:
         _lines.clear()
+        _total = 0
+    _echoed = 0
     _partial = ""
     if _window is not None:
         _window.offset = 0
@@ -224,6 +278,35 @@ def _rows(width):
     return rows
 
 
+def _sync_echo():
+    """Mark everything collected so far as already shown.
+
+    Called as the window opens and as it closes. The rows are on screen in
+    the window, so the command window must not print them as well -- once
+    while the window is up, or again the moment it goes away."""
+    global _echoed
+    _echoed = _total
+
+
+def _drain_to_cmd():
+    """Put the program's output in the command window while no window shows it.
+
+    Without this the output of a run made outside the "out" layout would
+    reach nothing the user can see: the pty collects it either way."""
+    global _echoed
+    with _lock:
+        pending = _total - _echoed
+        recent = list(_lines)[-pending:] if 0 < pending <= len(_lines) else []
+    if pending <= 0:
+        return
+    _echoed = _total
+    if recent and len(recent) <= _ECHO_MAX:
+        gdb.write("".join(line + "\n" for line in recent))
+    else:
+        gdb.write('%s[out] %d lines of program output; "out" reads them%s\n'
+                  % (_DIM, pending, _OFF))
+
+
 class OutWindow:
     def __init__(self, win):
         global _window
@@ -231,12 +314,21 @@ class OutWindow:
         self.win.title = "out"
         self.offset = 0      # rows held back from the bottom; 0 is the live tail
         _window = self
-        _open()
+        _sync_echo()
+        # Normally open already, from the import. This covers "out off"
+        # followed by the layout, where taking the terminal back is the
+        # obvious intent and no running process can be hung up by it.
+        if _master is None and not _alive():
+            _open()
 
     def close(self):
+        """The layout stopped using this window, so gdb is destroying it.
+
+        The pty stays open. Closing it here is what used to send SIGHUP to
+        the program whenever the layout changed while it was running."""
         global _window
         _window = None
-        _close()
+        _sync_echo()
 
     def vscroll(self, num):
         """PageUp / PageDown when this window has the focus.
@@ -315,12 +407,17 @@ def _on_cont(_event=None):
 def _redraw(_event=None):
     if _window is not None:
         _window.render()
+    else:
+        _drain_to_cmd()
 
 
 class OutLayoutCommand(gdb.Command):
     """Open the layout that shows the program's output.
 
 Usage: out
+       out send TEXT
+       out off
+       out on
 
 The output window sits on top, tracked expressions below it, the command
 window under both, in the same thirds as "vars". Compare "vars", which gives
@@ -328,19 +425,72 @@ that top third to the source instead.
 
 The command window takes the focus, so the arrow keys walk the command
 history. "focus out" moves the focus up, where PageUp and PageDown walk back
-through what the program printed; "focus cmd" brings it back."""
+through what the program printed; "focus cmd" brings it back.
+
+The output is collected from the moment gdb starts, so this layout can be
+opened in the middle of a run and still shows everything printed so far.
+
+"out send TEXT" writes one line into the program's terminal. The program
+reads from the terminal this window collects, not from the keyboard, so a
+program that calls scanf waits for this command rather than for a keystroke.
+gdb prints no prompt while the program runs, so there are two moments to send
+a line: before "run", where the pty holds it until the program reads it, or
+any time after "run &", which starts the program in the background and keeps
+the prompt. A program that reads more than a line or two is easier with
+"out off", or with gdb's own "run < answers.txt".
+
+"out off" hands the real terminal back, for a session spent typing at the
+program rather than reading it; the output then lands in the command window,
+where it used to. "out on" takes it again. Neither is allowed while a
+program is running: swapping its terminal mid-run either does nothing or
+hangs it up. Both take effect at the next run."""
 
     def __init__(self):
         super().__init__("out", gdb.COMMAND_USER)
 
     def invoke(self, arg, from_tty):
-        if arg.strip():
-            raise gdb.GdbError("out takes no argument. see: help out")
-        gdb.execute("layout out")
-        gdb.execute("focus cmd")
+        words = arg.split(None, 1)
+        if not words:
+            gdb.execute("layout out")
+            gdb.execute("focus cmd")
+            return
+        verb, rest = words[0], (words[1] if len(words) > 1 else "")
+        if verb == "send":
+            if _master is None:
+                raise gdb.GdbError(
+                    "out is off, so the program does not read from this "
+                    "window. see: out on")
+            os.write(_master, (rest + "\n").encode())
+        elif verb == "on":
+            if _master is not None:
+                raise gdb.GdbError("out is already on. see: help out")
+            if _alive():
+                raise gdb.GdbError(
+                    "a program is running and keeps the terminal it started "
+                    "with. kill it first, or let it finish.")
+            _open()
+            if _note is not None:
+                raise gdb.GdbError(_note)
+        elif verb == "off":
+            if _master is None:
+                raise gdb.GdbError("out is already off. see: help out")
+            if _alive():
+                raise gdb.GdbError(
+                    "closing this window's terminal would hang the running "
+                    "program up. kill it first, or let it finish.")
+            _close()
+        else:
+            raise gdb.GdbError(
+                "out takes no argument, or send TEXT / off / on. "
+                "see: help out")
 
 
 gdb.register_window_type("out", OutWindow)
 OutLayoutCommand()
 gdb.events.cont.connect(_on_cont)
 gdb.events.before_prompt.connect(_redraw)
+
+# Before any window exists and before the first "run": see the module
+# docstring. A failure here only sets _note, and the output falls back to the
+# command window.
+_open()
