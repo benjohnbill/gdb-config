@@ -105,11 +105,15 @@ end
 
 # A TUI window that redraws tracked expressions in place, instead of the
 # scrolling output that "display" produces.
-# Commands: track / info track / untrack / delete track / vars
+# Commands: track / info track / untrack / delete track / vars / each
 # "track walk EXPR DEPTH" and "track deep EXPR DEPTH" put a whole chain or a
 # whole structure on the board at once; "untrack walk EXPR" takes it back.
+# "track each PATTERN" (or just "track tri[0..5]") puts one row per element
+# or member; "each PATTERN" prints the same lines once, like "print".
 # Short names for the three typed most often are set up below: tk / itk / utk
 # chase.py needs no "source" line: varwin and walk import it themselves.
+# each.py needs none either: varwin imports it, and that import is what
+# registers "each". Sourcing it would put its helpers in the shared __main__.
 source ~/.config/gdb/varwin.py
 
 # A TUI window that holds the program's own output, so printf no longer

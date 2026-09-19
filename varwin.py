@@ -11,6 +11,7 @@ Commands follow gdb's own shape, where "display" is the closest relative:
     track -l EXPR   add it at its address      (compare: watch -location)
     info track      list what is tracked       (compare: info display)
     untrack N       remove expression N        (compare: undisplay N)
+    untrack 1..4    remove rows 1 to 4, both included; "6.." runs to the end
     delete track    remove every expression    (compare: delete display)
     vars            switch to the layout that shows the window
 
@@ -18,16 +19,28 @@ A whole structure goes in with one command, and comes back out with one:
 
     track walk EXPR DEPTH [FIELD]   the first DEPTH nodes of a chain
     track deep EXPR DEPTH           EXPR and what it reaches, DEPTH levels
+    track each [/FMT] PATTERN       one row per element or member: tri[0..5],
+                                    s.items[], s.items[0..3]->id, s.*
     untrack walk EXPR               remove what "track walk EXPR" added
     untrack deep EXPR               remove what "track deep EXPR" added
+    untrack each PATTERN            remove what "track each PATTERN" added
 
-Both add one row per struct rather than one per member, because a struct that
-did not move folds to "= {...}" while the one that did opens up and shows
-which member moved. A row per member would spend the window's height on the
-quiet ones and hide the answer. Both refuse to run when the window is closed,
-since that is where the rows go and where their budget comes from. "-l" works
-here too: "track walk -l EXPR DEPTH" pins the nodes at the addresses they hold
-right now, which is what you want when a node is about to leave the list.
+A pattern with a token in it needs no keyword: "track tri[0..5]" and
+"untrack tri[0..5]" are the each forms. The group is named by the pattern as
+typed, so "track tri[3..5]" adds a second group beside "track tri[0..2]"
+rather than replacing it, and "untrack" takes the same text. The grammar is
+in each.py.
+
+walk and deep add one row per struct rather than one per member, because a
+struct that did not move folds to "= {...}" while the one that did opens up
+and shows which member moved. A row per member would spend the window's
+height on the quiet ones and hide the answer. each is the deliberate
+exception: it spends a row per element because the question it answers is
+which element moved, and one folded row cannot say. All three refuse to run
+when the window is closed, since that is where the rows go and where their
+budget comes from. "-l" works here too: "track walk -l EXPR DEPTH" pins the
+nodes at the addresses they hold right now, which is what you want when a
+node is about to leave the list.
 
 A row whose value moved since the previous stop carries "*" in the first
 column and shows "old -> new". A multi-line value (a struct under "set print
@@ -51,12 +64,16 @@ import gdb
 
 # gdb runs this file with "source", which does not put its directory on the
 # import path. chase.py holds the traversal that "track walk" and the "walk"
-# command both need, so make it importable before asking for it.
+# command both need, so make it importable before asking for it. each.py is
+# the second import-only module: it turns a pattern such as tri[0..5] into
+# its rows for "track each", and importing it is also what registers the
+# "each" command, so gdbinit needs no line for it.
 _HERE = os.path.dirname(os.path.abspath(__file__))
 if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 
 import chase
+import each
 
 _exprs = []      # the expressions, in the order they were added
 _labels = {}     # expression -> what the window calls it
@@ -668,8 +685,8 @@ class VarWindow:
             lines.append("%s%s%s" % (_DIM, note, _OFF))
         lines = head + lines
         room += len(head)
-        footer = ("%s track <expr>   tk walk|deep EXPR N   untrack N   "
-              "* moved   ? not visible here%s" % (_DIM, _OFF))
+        footer = ("%s track <expr>  tk walk|deep|each …  untrack N..M  "
+              "* moved  ? not visible here%s" % (_DIM, _OFF))
         for line in lines:
             self.win.write(_clip(line, width) + "\n")
         self.win.write("\n" * max(0, room - len(lines)))
@@ -750,7 +767,12 @@ def _pinned(expr):
 # group, which is what lets "untrack walk s" take back exactly what
 # "track walk s" put in, and what makes a second run replace rather than
 # double.
-_GROUP_MODES = ("walk", "deep")
+#
+# "track each PATTERN" is the third expansion: one pattern such as tri[0..5]
+# or s.* becomes its elements or members, one row each. Its traversal lives
+# in each.py. A pattern that carries a token needs no keyword, so
+# "track tri[0..5]" arrives here too.
+_GROUP_MODES = ("walk", "deep", "each")
 
 
 def _available_rows():
@@ -806,27 +828,29 @@ def _expand(mode, name, expr, depth, field, limit):
                ", ".join(err.candidates), name))
 
 
-def _track_group(tokens):
-    """Put a whole chain or a whole structure in the window at once.
+def _full(name):
+    return gdb.GdbError(
+        "%s: the vars window is full. remove rows first. see: info track" % name)
 
-        track walk|deep [-l] EXPR DEPTH [FIELD]
 
-    The refusals are ordered so that the reason a user hears is the first
-    thing actually wrong, and every one of them happens before a single row
-    is touched. An expansion that cannot fit therefore leaves the window
-    exactly as it was rather than half filled."""
-    mode = tokens[0]
-    name = "tk %s" % mode
-    rest = tokens[1:]
-    pin = rest[0] in ("-l", "-location")
-    if pin:
-        rest = rest[1:]
+def _expand_each(name, pattern, available):
+    """The (expression, label) pairs for one "track each".
 
-    # The window is where the rows go and where the budget comes from. Adding
-    # to a window that is not there would be a silent no-op at best.
-    if _window is None:
+    The budget goes in as the limit, so a pattern that cannot fit stops
+    expanding as soon as that is certain. The refusal is reworded here
+    because only this layer knows where the rows were going."""
+    try:
+        return each.expand(pattern, cmd=name, limit=max(1, available))
+    except each.TooMany:
+        if available < 1:
+            raise _full(name)
         raise gdb.GdbError(
-            '%s: the vars window is not open. run "vars" first.' % name)
+            "%s: this expands past the %d rows the vars window has left. "
+            "narrow the range." % (name, available))
+
+
+def _chain_args(mode, name, rest):
+    """(expr, depth, field) for "track walk|deep", or the first refusal."""
     usage = "usage: %s EXPR DEPTH" % name
     if len(rest) < 2:
         raise gdb.GdbError("%s: give a depth. %s" % (name, usage))
@@ -849,46 +873,30 @@ def _track_group(tokens):
     # Evaluated before the budget is weighed, so that a misspelt name is
     # reported as a misspelt name rather than as a depth that does not fit.
     chase.evaluate(expr, name)
+    return expr, depth, field
 
-    group = _group_key(mode, expr)
-    existing = _group_members(group)
-    # A repeat replaces, so the rows this group already owns are its own to
-    # spend again.
-    available = _available_rows() + len(existing)
-    if available < 1:
-        raise gdb.GdbError(
-            "%s: the vars window is full. remove rows first. see: info track"
-            % name)
-    # walk counts nodes, so its depth is its row count and can be judged
-    # before any memory is read. deep counts levels, and a branching type
-    # turns a small depth into a large result, so it can only be measured
-    # after the fact.
-    if mode == "walk" and depth > available:
-        raise gdb.GdbError(
-            "%s: depth %d is too large. "
-            "the vars window has room for %d more rows."
-            % (name, depth, available))
 
-    entries = _expand(mode, name, expr, depth, field, available)
-    # Pinning is done here and not in the loop below, because _pinned() can
-    # refuse a value that has no address. Doing it after the old rows were
-    # dropped would leave the window holding half a group.
-    if pin:
-        entries = [(_pinned(expression), "@" + label)
-                   for expression, label in entries]
-    if len(entries) > available:
-        # Not an exact count: deep stops expanding as soon as the answer
-        # cannot fit, so the true total may be far larger than this.
-        raise gdb.GdbError(
-            "%s: this expands past the %d rows the vars window has left. "
-            "try a smaller depth." % (name, available))
+def _each_args(name, rest):
+    """(format, pattern) for "track each", or the refusal.
 
-    # Every refusal is above this line, so a rejected expansion leaves the
-    # window exactly as it was instead of half filled.
-    #
-    # A repeat goes back where the old one stood. Dropping and appending
-    # would shuffle the group past every row added since, and a list read
-    # top to bottom is the whole reason these rows are ordered at all.
+    The pattern is the rest of the line: it has no DEPTH or FIELD after it
+    to be confused with, and a plain "track a + b" takes spaces already."""
+    usage = "usage: %s [/FMT] PATTERN" % name
+    fmt, pattern = _split_format(" ".join(rest))
+    if not pattern:
+        raise gdb.GdbError("%s: give a pattern. %s" % (name, usage))
+    return fmt, pattern
+
+
+def _install_group(group, entries, existing, pin):
+    """Put an expansion's rows in the window, replacing its previous run.
+
+    Every refusal happens before this is called, so a rejected expansion
+    leaves the window exactly as it was instead of half filled.
+
+    A repeat goes back where the old one stood. Dropping and appending
+    would shuffle the group past every row added since, and a list read
+    top to bottom is the whole reason these rows are ordered at all."""
     position = _exprs.index(existing[0]) if existing else len(_exprs)
     _drop_group(group)
     for expression, label in entries:
@@ -909,17 +917,98 @@ def _track_group(tokens):
     _redraw()
 
 
+def _track_group(tokens):
+    """Put a whole chain, structure, or run of elements in the window at once.
+
+        track walk|deep [-l] EXPR DEPTH [FIELD]
+        track each [-l] [/FMT] PATTERN
+
+    The refusals are ordered so that the reason a user hears is the first
+    thing actually wrong, and every one of them happens before a single row
+    is touched. An expansion that cannot fit therefore leaves the window
+    exactly as it was rather than half filled."""
+    mode = tokens[0]
+    name = "tk %s" % mode
+    rest = tokens[1:]
+    pin = bool(rest) and rest[0] in ("-l", "-location")
+    if pin:
+        rest = rest[1:]
+
+    # The window is where the rows go and where the budget comes from. Adding
+    # to a window that is not there would be a silent no-op at best.
+    if _window is None:
+        raise gdb.GdbError(
+            '%s: the vars window is not open. run "vars" first.' % name)
+    fmt = None
+    if mode == "each":
+        fmt, pattern = _each_args(name, rest)
+        key = pattern
+    else:
+        key, depth, field = _chain_args(mode, name, rest)
+
+    group = _group_key(mode, key)
+    existing = _group_members(group)
+    # A repeat replaces, so the rows this group already owns are its own to
+    # spend again.
+    available = _available_rows() + len(existing)
+    if mode == "each":
+        # Expanded before the budget is judged, for the same reason the chain
+        # forms evaluate first: a misspelt name is reported as one.
+        entries = _expand_each(name, pattern, available)
+        if available < 1:
+            raise _full(name)
+    else:
+        if available < 1:
+            raise _full(name)
+        # walk counts nodes, so its depth is its row count and can be judged
+        # before any memory is read. deep counts levels, and a branching type
+        # turns a small depth into a large result, so it can only be measured
+        # after the fact.
+        if mode == "walk" and depth > available:
+            raise gdb.GdbError(
+                "%s: depth %d is too large. "
+                "the vars window has room for %d more rows."
+                % (name, depth, available))
+        entries = _expand(mode, name, key, depth, field, available)
+    # Pinning is done here and not in _install_group, because _pinned() can
+    # refuse a value that has no address. Doing it after the old rows were
+    # dropped would leave the window holding half a group.
+    if pin:
+        entries = [(_pinned(expression), "@" + label)
+                   for expression, label in entries]
+    # The format goes on after the pin, as plain "track -l /x p" stores it.
+    if fmt:
+        entries = [("/%s %s" % (fmt, expression), label)
+                   for expression, label in entries]
+    if len(entries) > available:
+        # Not an exact count: both expansions stop as soon as the answer
+        # cannot fit, so the true total may be far larger than this.
+        raise gdb.GdbError(
+            "%s: this expands past the %d rows the vars window has left. %s"
+            % (name, available,
+               "narrow the range." if mode == "each" else "try a smaller depth."))
+    _install_group(group, entries, existing, pin)
+
+
 class TrackCommand(gdb.Command):
     """Track an expression in the vars window.
 
 Usage: track [-l|-location] EXPR
+       track walk EXPR DEPTH [FIELD]     the first DEPTH nodes of a chain
+       track deep EXPR DEPTH             EXPR and what it reaches, DEPTH levels
+       track each [/FMT] PATTERN         one row per element or member
 
 The expression is re-evaluated at every stop and shown on its own row, which
 is overwritten rather than appended to. Compare "display", which scrolls.
 
 With -l the expression is evaluated once and the row is rewritten to the
 address it referred to, so it survives leaving the frame. Compare
-"watch -location"."""
+"watch -location".
+
+A PATTERN is an expression with [A..B], [..], [] or .* in it: tri[0..5],
+s.items[], s.items[0..3]->id, s.*. Such a pattern needs no "each" in front
+of it. "track each EXPR" with no token steps through an array or a struct
+whole. See "help each" for the grammar."""
 
     def __init__(self):
         # The third argument is the completer. Without it a gdb.Command
@@ -937,6 +1026,12 @@ address it referred to, so it survives leaving the frame. Compare
         tokens = arg.split()
         if len(tokens) >= 2 and tokens[0] in _GROUP_MODES:
             _track_group(tokens)
+            return
+        # A pattern such as tri[0..5] or s.* cannot be a C expression, so it
+        # needs no keyword: it is "track each" whether or not that was typed.
+        # This runs before the flags are read, so "-l" and "/x" travel with it.
+        if each.has_pattern(arg):
+            _track_group(["each"] + tokens)
             return
         pin = False
         for flag in ("-location", "-l"):
@@ -993,14 +1088,24 @@ class InfoTrackCommand(gdb.Command):
         print("Num  Expression")
         for i, expr in enumerate(_exprs, 1):
             label = _labels.get(expr)
-            if label:
+            if label and label != expr:
                 print("%-4d %s   is   %s" % (i, label, expr))
             else:
                 print("%-4d %s" % (i, expr))
 
 
 class UntrackCommand(gdb.Command):
-    """Stop tracking expression N. With no argument, stop tracking all."""
+    """Stop tracking expression N. With no argument, stop tracking all.
+
+Usage: untrack N [N ...]          the rows numbered N, see "info track"
+       untrack 1..4               rows 1 to 4, both included, as "tk tri[0..5]"
+       untrack 6..   untrack ..4  from row 6 to the last; from the first to row 4
+
+"untrack walk EXPR", "untrack deep EXPR" and "untrack each PATTERN" take
+back what the matching "track" put in. A pattern with a token in it needs
+no keyword here either: "untrack tri[0..5]", spelled as it was tracked. A
+group added as "track each s.items" (no token) is removed with "untrack each
+s.items" or by number."""
 
     def __init__(self):
         super().__init__("untrack", gdb.COMMAND_USER)
@@ -1014,27 +1119,69 @@ class UntrackCommand(gdb.Command):
         # Row numbers cannot do this: an expansion of twelve rows would need
         # twelve numbers, and they shift as soon as one is removed.
         tokens = arg.split()
-        if len(tokens) == 2 and tokens[0] in _GROUP_MODES:
+        group = None
+        if len(tokens) >= 2 and tokens[0] == "each":
+            group = _group_key("each", _split_format(" ".join(tokens[1:]))[1])
+        elif len(tokens) == 2 and tokens[0] in _GROUP_MODES:
             group = _group_key(*tokens)
+        elif each.has_pattern(arg):
+            # The same sugar "track" takes, and the same key it built: the
+            # format prefix is not part of the group's name.
+            group = _group_key("each", _split_format(" ".join(tokens))[1])
+        if group is not None:
             if not _group_members(group):
                 raise gdb.GdbError(
                     'untrack: no group named "%s". see: info track' % group)
             _drop_group(group)
             _redraw()
             return
-        for token in arg.split():
-            try:
-                index = int(token) - 1
-            except ValueError:
-                raise gdb.GdbError(
-                    "untrack takes numbers. see: info track")
-            if not 0 <= index < len(_exprs):
-                raise gdb.GdbError(
-                    "no tracked expression %s. see: info track" % token)
+        # Every token is checked before any row goes, so a typo in the
+        # second token cannot leave the first one half done.
+        picked = _row_numbers(tokens)
         # Remove from the back, so the earlier indices stay valid.
-        for index in sorted((int(t) - 1 for t in arg.split()), reverse=True):
+        for index in sorted(picked, reverse=True):
             _forget(_exprs.pop(index))
         _redraw()
+
+
+def _row_numbers(tokens):
+    """The rows a list of tokens names, as 0-based indices.
+
+    A token is a row number or a range of them: "3", "1..4", "6.." (to the
+    last row), "..4" (from the first). The ".." is the one "tk tri[0..5]"
+    uses, both ends included, so one habit serves both commands."""
+    picked = set()
+    last = len(_exprs)
+    for token in tokens:
+        if ".." in token:
+            low_text, _, high_text = token.partition("..")
+            try:
+                low = int(low_text) if low_text else 1
+                high = int(high_text) if high_text else last
+            except ValueError:
+                raise gdb.GdbError(
+                    'untrack: "%s" is not a range of row numbers. '
+                    "see: info track" % token)
+            if high < low:
+                raise gdb.GdbError(
+                    "untrack: %s runs backwards. give the low number first."
+                    % token)
+            if high > last:
+                raise gdb.GdbError(
+                    "untrack: %s reaches past the last row, %d. see: info track"
+                    % (token, last))
+            numbers = range(low, high + 1)
+        else:
+            try:
+                numbers = [int(token)]
+            except ValueError:
+                raise gdb.GdbError("untrack takes numbers. see: info track")
+        for number in numbers:
+            if not 1 <= number <= last:
+                raise gdb.GdbError(
+                    "no tracked expression %d. see: info track" % number)
+            picked.add(number - 1)
+    return picked
 
 
 def _clear():

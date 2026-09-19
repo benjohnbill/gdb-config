@@ -333,4 +333,39 @@ notes, undrawn = varwin._dead_tails(pinned, live=True)
 check("a pinned group is never collapsed", notes, {})
 check("a pinned group hides nothing", undrawn, set())
 
+
+# ── untrack by a range of row numbers ────────────────────────────────────
+# "utk 1..4" reads like "tk tri[0..5]": the same "..", both ends included.
+reset()
+for name in ("scalar", "head", "plain", "root", "dhead", "loop"):
+    run("track %s" % name)
+run("untrack 2..4")
+check("untrack A..B: removes rows A to B, both included",
+      list(varwin._exprs), ["scalar", "dhead", "loop"])
+run("untrack 2..")
+check("untrack A..: removes from A to the last row",
+      list(varwin._exprs), ["scalar"])
+
+reset()
+for name in ("scalar", "head", "plain", "root"):
+    run("track %s" % name)
+run("untrack ..2 4")
+check("untrack ..B and a number: the forms combine",
+      list(varwin._exprs), ["plain"])
+
+reset()
+run("track scalar")
+run("track head")
+raises("untrack: a backwards range is refused", "runs backwards",
+       run, "untrack 2..1")
+raises("untrack: a range past the last row names the last row",
+       "1..5 reaches past the last row, 2", run, "untrack 1..5")
+raises("untrack: a word inside a range is refused", "not a range",
+       run, "untrack 1..x")
+raises("untrack: a plain word is still refused", "untrack takes numbers",
+       run, "untrack two")
+check("untrack: a refused range removed nothing", len(varwin._exprs), 2)
+run("delete track 1..2")
+check("delete track takes a range too", varwin._exprs, [])
+
 harness.report("track")
