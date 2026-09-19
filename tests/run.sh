@@ -13,7 +13,8 @@ for pair in test_chain.py:chains \
             test_deep.py:widgets \
             test_each.py:widgets \
             test_track.py:chains \
-            test_walk_command.py:chains; do
+            test_walk_command.py:chains \
+            test_layout.py:chains; do
     file=${pair%%:*}
     fixture=${pair##*:}
     output=$(gdb --nx --batch -x "$file" "./fixtures/$fixture" 2>&1)

@@ -14,6 +14,7 @@ Commands follow gdb's own shape, where "display" is the closest relative:
     untrack 1..4    remove rows 1 to 4, both included; "6.." runs to the end
     delete track    remove every expression    (compare: delete display)
     vars            switch to the layout that shows the window
+    vars full       give that window the whole panel, minus a small prompt
 
 A whole structure goes in with one command, and comes back out with one:
 
@@ -574,6 +575,34 @@ def _dead_tails(readings, live):
     return notes, undrawn
 
 
+def _more_hint(needed, height):
+    """What to type to see the rows that did not fit.
+
+    "vars full" is named whenever it would show all of them: it is one word,
+    and it always gives this window every row the terminal has left. Once
+    the window already has that height there is nothing left to name, so the
+    hint says how tall the rows are instead and leaves the choice of what to
+    untrack to the reader. winheight stays beside "vars full" for the middle
+    case, where a few more rows are enough and the source window is worth
+    keeping.
+
+    "needed" and "height" are both content rows. winheight counts the two
+    border rows as well, which is why the number it is given is two larger.
+    The comparison is with the full layout rather than with the terminal,
+    because the command window keeps three rows there and cannot go under
+    them; see _full_layout_height."""
+    full = _full_layout_height()
+    if not full:
+        # The terminal size could not be read, so "vars full" cannot be
+        # promised to fit. winheight is the answer that needs no promise.
+        return "winheight vars %d" % (needed + 2)
+    if needed > full:
+        return "needs %d rows, the screen holds %d" % (needed, full)
+    if height < full:
+        return "vars full, or winheight vars %d" % (needed + 2)
+    return "winheight vars %d" % (needed + 2)
+
+
 def _room(height, banner_rows):
     """The rows left for the tracked expressions themselves.
 
@@ -679,9 +708,9 @@ class VarWindow:
             note = " ... %d more" % hidden
             if hidden_changed:
                 note += ", %d changed" % hidden_changed
-            # winheight counts the two border rows as well as the footer.
-            note += " (winheight vars %d)" % (
-                sum(len(rows) for _, rows in physical) + 3 + len(head))
+            note += " (%s)" % _more_hint(
+                sum(len(rows) for _, rows in physical) + 1 + len(head),
+                height)
             lines.append("%s%s%s" % (_DIM, note, _OFF))
         lines = head + lines
         room += len(head)
@@ -828,9 +857,32 @@ def _expand(mode, name, expr, depth, field, limit):
                ", ".join(err.candidates), name))
 
 
+def _taller_hint():
+    """The clause that names a layout with more room, or nothing at all.
+
+    A refusal that only says how few rows are left sends the reader looking
+    for rows to drop, when one command would have given them the rows
+    instead. It is a separate clause rather than a rewrite of each message,
+    because how many rows this window has left and how many another layout
+    would have are two different facts and only the second names a command.
+
+    Empty whenever there is nothing to offer: no window, no terminal to
+    measure, or a window that already has the full layout's height."""
+    if _window is None:
+        return ""
+    full = _full_layout_height()
+    if not full or _window.win.height >= full:
+        return ""
+    room = _room(full, 1 if _selected_depth() else 0) - len(_exprs)
+    if room <= _available_rows():
+        return ""
+    return ' "vars full" has room for %d.' % room
+
+
 def _full(name):
     return gdb.GdbError(
-        "%s: the vars window is full. remove rows first. see: info track" % name)
+        "%s: the vars window is full.%s remove rows first. see: info track"
+        % (name, _taller_hint()))
 
 
 def _expand_each(name, pattern, available):
@@ -846,7 +898,7 @@ def _expand_each(name, pattern, available):
             raise _full(name)
         raise gdb.GdbError(
             "%s: this expands past the %d rows the vars window has left. "
-            "narrow the range." % (name, available))
+            "narrow the range.%s" % (name, available, _taller_hint()))
 
 
 def _chain_args(mode, name, rest):
@@ -967,8 +1019,8 @@ def _track_group(tokens):
         if mode == "walk" and depth > available:
             raise gdb.GdbError(
                 "%s: depth %d is too large. "
-                "the vars window has room for %d more rows."
-                % (name, depth, available))
+                "the vars window has room for %d more rows.%s"
+                % (name, depth, available, _taller_hint()))
         entries = _expand(mode, name, key, depth, field, available)
     # Pinning is done here and not in _install_group, because _pinned() can
     # refuse a value that has no address. Doing it after the old rows were
@@ -1227,6 +1279,15 @@ _CMD_ROWS_FRACTION = 0.33
 _CMD_ROWS_MIN = 4
 _TERMINAL_RESERVE = 7   # one more than the measured limit, as margin
 
+# gdb also refuses to make a window shorter than three rows, and it clamps in
+# silence rather than saying so: "winheight cmd 1", "winheight cmd 2" and
+# "winheight cmd 3" all draw the same screen. Measured on gdb 17.1 in a
+# 50-row terminal, all three leave the vars window 44 rows. Three is
+# therefore the smallest command window there is, and what "vars full" asks
+# for. It is below _CMD_ROWS_MIN on purpose: that floor is what a balanced
+# layout should not go under, and "vars full" is the one layout that should.
+_CMD_ROWS_FULL = 3
+
 
 def _terminal_rows():
     """Rows in the terminal, not in any one window.
@@ -1245,18 +1306,20 @@ def _terminal_rows():
     return rows or 0
 
 
-def _fit_cmd_window(wanted=None):
+def _fit_cmd_window(wanted=None, floor=_CMD_ROWS_MIN):
     """Size the command window against the terminal.
 
     "wanted" of None means the layout default: a fraction of the terminal,
-    so the balance holds when the panel is dragged to another size."""
+    so the balance holds when the panel is dragged to another size. "floor"
+    is the height below which resizing is not worth doing at all, and the
+    caller lowers it for a layout that wants the smallest window gdb has."""
     rows = _terminal_rows()
     if not rows:
         return None
     if wanted is None:
-        wanted = max(_CMD_ROWS_MIN, int(rows * _CMD_ROWS_FRACTION))
+        wanted = max(floor, int(rows * _CMD_ROWS_FRACTION))
     target = min(wanted, rows - _TERMINAL_RESERVE)
-    if target < _CMD_ROWS_MIN:
+    if target < floor:
         # Too short to divide. Leave the layout weights to it.
         return None
     try:
@@ -1264,6 +1327,21 @@ def _fit_cmd_window(wanted=None):
     except gdb.error:
         return None
     return target
+
+
+def _full_layout_height():
+    """The height this window gets under "vars full", in content rows.
+
+    The whole terminal, less the three rows gdb will not take from the
+    command window, the two borders of this one and the one status row.
+    Measured against gdb 17.1 at four terminal sizes: 64 rows give this
+    window 58, 52 give 46, 40 give 34 and 30 give 24, which is what the
+    arithmetic below says at all four. 0 when the terminal cannot be
+    measured, which the callers read as "do not promise anything"."""
+    rows = _terminal_rows()
+    if not rows:
+        return 0
+    return max(0, rows - _CMD_ROWS_FULL - 3)
 
 
 class CmdWinCommand(gdb.Command):
@@ -1288,18 +1366,53 @@ so a short terminal gets a shorter command window instead of a warning."""
                   "the command window keeps its height")
 
 
+# A command window shrunk by "vars full" stays shrunk when another layout
+# opens, so the flag below remembers to hand the rows back. Measured on
+# gdb 17.1 in a 50-row terminal: "vars" gives the vars window 15 rows on its
+# own and 22 straight after "vars full" without this flag, because the three
+# rows left to the command window were still three. With it, 16: the height
+# handed back is the fraction a bare "cmdwin" resets to, which lands one row
+# off gdb's own third rather than on it.
+_cmd_minimised = False
+
+
+def _size_cmd_window(full, from_tty=False):
+    """Give the command window the height the layout being opened wants.
+
+    Only the full layout sets a height of its own. The others want exactly
+    the third gdb hands them, so nothing is resized for them unless this
+    module shrank the window earlier and owes the rows back."""
+    global _cmd_minimised
+    if full:
+        _cmd_minimised = _fit_cmd_window(_CMD_ROWS_FULL,
+                                         floor=_CMD_ROWS_FULL) is not None
+        if not _cmd_minimised and from_tty:
+            print("terminal too short to shrink the command window; "
+                  "the layout keeps gdb's own split")
+    elif _cmd_minimised:
+        _fit_cmd_window()
+        _cmd_minimised = False
+
+
 class VarsLayoutCommand(gdb.Command):
     """Open a tracked-expression layout.
 
-Usage: vars [src]
+Usage: vars [src | full]
 
-No argument gives the "vars" layout: a source window just tall enough to
-show the arrow, and the rest split between tracked expressions and the
+No argument gives the "vars-even" layout: a source window just tall enough
+to show the arrow, and the rest split between tracked expressions and the
 command window. "vars src" gives the "src-vars" layout, where the source
 window is the large one, for reading code inside gdb rather than in the
-editor. Both layouts are defined in ~/.config/gdb/gdbinit."""
+editor. "vars full" gives the "vars-full" layout: no source window at all
+and the command window at the three rows gdb will not go under, for a
+structure with more rows than a third of the screen can hold.
 
-    _LAYOUTS = {"": "vars", "src": "src-vars"}
+"vars" and "vars src" give the even split back, and "cmdwin ROWS" sets any
+other height for the command window. All three layouts are defined in
+~/.config/gdb/gdbinit, and "layout vars", "layout vars src" and
+"layout vars full" are the same three commands under gdb's own spelling."""
+
+    _LAYOUTS = {"": "vars-even", "src": "src-vars", "full": "vars-full"}
 
     def __init__(self):
         super().__init__("vars", gdb.COMMAND_USER)
@@ -1310,8 +1423,9 @@ editor. Both layouts are defined in ~/.config/gdb/gdbinit."""
             layout = self._LAYOUTS[arg]
         except KeyError:
             raise gdb.GdbError(
-                "vars takes no argument or \"src\". see: help vars")
+                "vars takes no argument, \"src\" or \"full\". see: help vars")
         gdb.execute("layout %s" % layout)
+        _size_cmd_window(arg == "full", from_tty)
         # Focus on the command window, so the arrow keys walk the command
         # history instead of scrolling the source. PageUp/PageDown still
         # scroll the source, and "focus src" puts the arrows back.
@@ -1322,6 +1436,37 @@ editor. Both layouts are defined in ~/.config/gdb/gdbinit."""
                   "scrolling the command window. 'delete display' stops them.")
 
 
+class TuiLayoutVarsCommand(gdb.Command):
+    """Open a tracked-expression layout.
+
+Usage: layout vars [src | full]
+
+The three layouts of the "vars" command, under the name gdb uses for
+layouts. This is a command rather than a layout of its own because gdb
+reads only the first word after "layout" and drops the rest in silence:
+with "vars" defined as a layout, "layout vars full" opens the plain one,
+which is the wrong window, and nothing on the screen says so. Registering
+here, in the place "tui new-layout vars" would have taken, is what makes
+the rest of the line arrive.
+
+The layouts therefore carry the names "vars-even", "src-vars" and
+"vars-full", which also leaves the "vars" command free to apply one
+without calling itself."""
+
+    def __init__(self):
+        super().__init__("tui layout vars", gdb.COMMAND_TUI)
+
+    def invoke(self, arg, from_tty):
+        try:
+            gdb.execute(("vars %s" % arg.strip()).strip())
+        except gdb.error as err:
+            # execute() hands back a refusal from "vars" as a plain
+            # gdb.error, and a gdb.error that escapes invoke is printed as
+            # "Error occurred in Python: ...". Re-raising it as a GdbError
+            # is what keeps a mistyped name a one-line answer.
+            raise gdb.GdbError(str(err))
+
+
 gdb.register_window_type("vars", VarWindow)
 TrackCommand()
 InfoTrackCommand()
@@ -1329,6 +1474,7 @@ UntrackCommand()
 DeleteTrackCommand()
 CmdWinCommand()
 VarsLayoutCommand()
+TuiLayoutVarsCommand()
 gdb.events.stop.connect(_snapshot)
 gdb.events.exited.connect(_on_exit)
 gdb.events.before_prompt.connect(_redraw)

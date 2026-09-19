@@ -147,29 +147,43 @@ source ~/.config/gdb/walk.py
 # "snap" / "snaps" / "back" are named checkpoints. Plain "restart" consumes a
 # checkpoint the moment you run forward from it; "back" re-takes it instead.
 source ~/.config/gdb/snap.py
-# Two layouts, both opened by the "vars" command from varwin.py.
+# Three layouts, all opened by the "vars" command from varwin.py. None of
+# them is named after the command that opens it: "vars", "vars src" and
+# "vars full" are what you type, and "layout vars", "layout vars src" and
+# "layout vars full" are the same three under gdb's own spelling. The names
+# differ because "layout vars" is a command in varwin.py, not a layout, and
+# a command cannot apply a layout of its own name without calling itself.
+# The comment on TuiLayoutVarsCommand says why it has to be a command.
 #
-# "vars" is the working layout: source, tracked expressions and commands get
-# a third of the panel each. "vars src" (also spelled "dbg") trades two of
-# those thirds for a tall source window, for the times gdb itself has to show
-# the code instead of the editor beside this panel.
+# "vars-even" is the working layout: source, tracked expressions and commands
+# get a third of the panel each. "src-vars" (typed "vars src", also spelled
+# "dbg") trades two of those thirds for a tall source window, for the times
+# gdb itself has to show the code instead of the editor beside this panel.
+# "vars-full" drops the source window and leaves the command window the three
+# rows gdb will not go under, for a structure with more rows than a third of
+# the screen can hold. "vars" or "vars src" gives the even split back, and
+# "cmdwin ROWS" sets any other height for the command window.
 #
 # gdb ignores the cmd weight here. That window always takes one third of the
 # terminal, whatever number the layout gives it, so only the src and vars
 # weights do any work and they divide what is left. An equal split therefore
-# needs nothing more than "src 1 vars 1". Measured heights, gdb 17.1:
+# needs nothing more than "src 1 vars 1", and "vars-full" cannot be written
+# in weights at all: the winheight that gets it past the third is run by the
+# "vars" command. Measured heights, gdb 17.1:
 #           64-row        52-row        40-row        30-row
-#   vars      21 22 21      17 18 17      13 14 13      10 10 10
+#   vars-even 21 22 21      17 18 17      13 14 13      10 10 10
 #   src-vars  28 15 21      23 12 17      18  9 13      13  7 10
+#   vars-full  - 58  3       - 46  3       - 34  3       - 24  3
 # (src, vars, cmd; the status window is one row at every size.)
-tui new-layout vars      src 1  vars 1  status 0  cmd 1
-tui new-layout src-vars  src 2  vars 1  status 0  cmd 1
+tui new-layout vars-even  src 1  vars 1  status 0  cmd 1
+tui new-layout src-vars   src 2  vars 1  status 0  cmd 1
+tui new-layout vars-full          vars 1  status 0  cmd 1
 
-# The third layout trades the source window for the program's output: what it
+# A fourth layout trades the source window for the program's output: what it
 # printed on top, tracked expressions in the middle, commands below, in the
-# same thirds as "vars". The source is read in the editor beside this panel;
-# what is hard to read anywhere else is the output, which until now landed in
-# the command window and pushed everything else off the screen.
+# same thirds as "vars-even". The source is read in the editor beside this
+# panel; what is hard to read anywhere else is the output, which until now
+# landed in the command window and pushed everything else off the screen.
 # Opened by "out" (outwin.py), the way "vars" opens its own.
 tui new-layout out       out 1  vars 1  status 0  cmd 1
 
