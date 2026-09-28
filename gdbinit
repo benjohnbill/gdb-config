@@ -65,7 +65,8 @@ set pagination off
 set tui mouse-events off
 
 # Edit -> build -> run in one word. gdb itself never compiles, so "rebuild"
-# (rebuild.py, sourced just above) calls make for the loaded executable first;
+# (rebuild.py, sourced just below) rebuilds the loaded executable first, by
+# replaying the "c dbg" wrapper's gcc command or else by calling make;
 # on a compile error it raises, which stops this command before the kill and
 # leaves the running process alone.
 #
@@ -78,7 +79,7 @@ set tui mouse-events off
 # confirm is saved and restored rather than forced back to "on", so a user who
 # works with "set confirm off" keeps that setting.
 # Native targets only. A remote target (QEMU, JTAG) has no "run".
-# "rebuild" for the command below: run make for the loaded executable.
+# "rebuild" for the command below: rebuild the loaded executable.
 source ~/.config/gdb/rebuild.py
 
 define rerun
@@ -97,7 +98,7 @@ define rerun
   run
 end
 document rerun
-Rebuild first, then rerun: make the loaded executable, kill the old process,
+Rebuild first, then rerun: build the loaded executable, kill the old process,
 drop the source cache, run. A failed build stops here, so the process you
 were debugging stays alive. Takes no argument; "rebuild TARGET" builds one
 target by hand.

@@ -14,6 +14,7 @@ for pair in test_chain.py:chains \
             test_each.py:widgets \
             test_track.py:chains \
             test_walk_command.py:chains \
+            test_rebuild.py:chains \
             test_layout.py:chains; do
     file=${pair%%:*}
     fixture=${pair##*:}
