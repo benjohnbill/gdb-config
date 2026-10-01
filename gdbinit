@@ -212,6 +212,45 @@ tui new-layout vars-full          vars 1  status 0  cmd 1
 # Opened by "out" (outwin.py), the way "vars" opens its own.
 tui new-layout out       out 1  vars 1  status 0  cmd 1
 
+# A known flaw, and gdb's rather than ours: if "vars" or "out" is the first
+# thing in a session to turn the TUI on, the command window misbehaves from
+# then on. The typed command and the next line are glued
+# ("(gdb) runStarting program: ..."), the "Breakpoint 1 at ..." reply of a
+# "break" shows up behind the next prompt and is painted over a moment later,
+# and "finish" prints its lines in the wrong order. Seen on gdb 17.1, in tmux
+# as well as in the raw bytes, so it is not the capture.
+#
+# The cause: gdb.execute() puts back, when it returns, the ui_out it found on
+# entry (python.c). "layout" inside it switched on the TUI, and that swaps in
+# the TUI's own ui_out (tui_setup_io, tui-io.c), so the restore undoes the
+# swap. Every reply that goes through ui_out ("Starting program: ", "Breakpoint
+# 1 at ...", "Run till exit from ...") then reaches the terminal directly and
+# not the command window, while gdb_printf text still goes to the window, which
+# is the reordering. "vars" and "out" are Python commands that call "layout", so
+# they hit it; so does a bare Python command that only runs "layout src",
+# while a "define" command or a typed "layout src" does not.
+#
+# Nothing in the window code can undo that, but the TUI can be switched on
+# before the Python command starts, and a hook is the one place that runs
+# outside any Python frame: gdb runs "hook-NAME" first, as a plain gdb
+# command, and "tui enable" does nothing once the TUI is up. The hook cannot
+# see the arguments of the command it precedes, which is why "out" is a
+# prefix command (outwin.py): "out send" and "out off" are commands of their
+# own and never reach hook-out, so they do not switch the TUI on. The third
+# hook is "layout vars", which is a command of its own as well.
+# Without the hooks, "tui enable" typed before the first "vars" or "out" does
+# the same, and "tui disable" followed by "tui enable" repairs a session that
+# is already like this; the layout stays.
+define hook-vars
+  tui enable
+end
+define hook-out
+  tui enable
+end
+define tui layout hook-vars
+  tui enable
+end
+
 # "track" is the most typed command here, so give it a two-letter name.
 # Not "tr": gdb already ships that as an alias of "trace" (with trac, tra, tp),
 # and it refuses to redefine an existing alias.

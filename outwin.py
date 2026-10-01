@@ -64,6 +64,7 @@ import struct
 import termios
 import threading
 
+import __main__
 import gdb
 
 _MAX_LINES = 5000     # how far back "focus out" + PageUp can reach
@@ -414,6 +415,26 @@ def _redraw(_event=None):
         _drain_to_cmd()
 
 
+def _hand_back_cmd_rows():
+    """Give the command window the rows "vars full" took from it.
+
+    "vars full" shrinks the command window to three rows and leaves a flag in
+    varwin; "vars" and "vars src" read it and hand the rows back. This layout
+    has a command of its own that never looked, so "vars full" then "out"
+    kept the three rows. Measured at 40 rows, border rows included: out 18,
+    vars 19, cmd 3, where a fresh "out" gives 13, 14, 13.
+
+    varwin.py is sourced, so its names live in gdb's shared __main__ and
+    cannot be imported (the comment above "import outwin" in gdbinit tells
+    why). The lookup happens at the call, so a session without varwin, such as
+    the test suite importing this file alone, just skips it. With the flag
+    clear the call does nothing, which leaves a fresh "out" on gdb's own
+    third."""
+    size = getattr(__main__, "_size_cmd_window", None)
+    if size is not None:
+        size(False)
+
+
 class OutLayoutCommand(gdb.Command):
     """Open the layout that shows the program's output.
 
@@ -449,47 +470,87 @@ program is running: swapping its terminal mid-run either does nothing or
 hangs it up. Both take effect at the next run."""
 
     def __init__(self):
-        super().__init__("out", gdb.COMMAND_USER)
+        # A prefix, so that "out send", "out on" and "out off" are commands of
+        # their own and a hook on "out" in gdbinit fires for the bare layout
+        # alone; see the comment above "define hook-out" there.
+        super().__init__("out", gdb.COMMAND_USER, gdb.COMPLETE_NONE, True)
 
     def invoke(self, arg, from_tty):
-        words = arg.split(None, 1)
-        if not words:
-            gdb.execute("layout out")
-            gdb.execute("focus cmd")
-            return
-        verb, rest = words[0], (words[1] if len(words) > 1 else "")
-        if verb == "send":
-            if _master is None:
-                raise gdb.GdbError(
-                    "out is off, so the program does not read from this "
-                    "window. see: out on")
-            os.write(_master, (rest + "\n").encode())
-        elif verb == "on":
-            if _master is not None:
-                raise gdb.GdbError("out is already on. see: help out")
-            if _alive():
-                raise gdb.GdbError(
-                    "a program is running and keeps the terminal it started "
-                    "with. kill it first, or let it finish.")
-            _open()
-            if _note is not None:
-                raise gdb.GdbError(_note)
-        elif verb == "off":
-            if _master is None:
-                raise gdb.GdbError("out is already off. see: help out")
-            if _alive():
-                raise gdb.GdbError(
-                    "closing this window's terminal would hang the running "
-                    "program up. kill it first, or let it finish.")
-            _close()
-        else:
+        if arg.strip():
+            # The three verbs never get here: they are commands of their own.
             raise gdb.GdbError(
                 "out takes no argument, or send TEXT / off / on. "
                 "see: help out")
+        gdb.execute("layout out")
+        _hand_back_cmd_rows()
+        gdb.execute("focus cmd")
+
+
+class OutSendCommand(gdb.Command):
+    """Write one line into the program's terminal.
+
+Usage: out send TEXT
+
+See: help out"""
+
+    def __init__(self):
+        super().__init__("out send", gdb.COMMAND_USER)
+
+    def invoke(self, arg, from_tty):
+        if _master is None:
+            raise gdb.GdbError(
+                "out is off, so the program does not read from this "
+                "window. see: out on")
+        os.write(_master, (arg + "\n").encode())
+
+
+class OutOnCommand(gdb.Command):
+    """Take the program's terminal for the out window again.
+
+Usage: out on
+
+See: help out"""
+
+    def __init__(self):
+        super().__init__("out on", gdb.COMMAND_USER)
+
+    def invoke(self, arg, from_tty):
+        if _master is not None:
+            raise gdb.GdbError("out is already on. see: help out")
+        if _alive():
+            raise gdb.GdbError(
+                "a program is running and keeps the terminal it started "
+                "with. kill it first, or let it finish.")
+        _open()
+        if _note is not None:
+            raise gdb.GdbError(_note)
+
+
+class OutOffCommand(gdb.Command):
+    """Hand the program's terminal back to gdb.
+
+Usage: out off
+
+See: help out"""
+
+    def __init__(self):
+        super().__init__("out off", gdb.COMMAND_USER)
+
+    def invoke(self, arg, from_tty):
+        if _master is None:
+            raise gdb.GdbError("out is already off. see: help out")
+        if _alive():
+            raise gdb.GdbError(
+                "closing this window's terminal would hang the running "
+                "program up. kill it first, or let it finish.")
+        _close()
 
 
 gdb.register_window_type("out", OutWindow)
 OutLayoutCommand()
+OutSendCommand()
+OutOnCommand()
+OutOffCommand()
 gdb.events.cont.connect(_on_cont)
 gdb.events.before_prompt.connect(_redraw)
 

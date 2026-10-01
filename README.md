@@ -230,7 +230,7 @@ multi-thre Thread 0x7ffff7fa47 (cmd) In: eb_grow               L80   PC: 0x55555
 ```
 
 - `vars`를 `run` 뒤에 치면 소스 창이 멈춘 줄로 맞춰지지 않아 어디서 멈췄는지 보이지 않을 수 있다. `run` 전에 `vars`를 치거나 `frame`을 한 번 치면 된다.
-- TUI에서 `finish`는 명령 창의 출력 순서를 뒤섞거나 화면 전체를 밀어 올리는 경우가 있다. 같은 증상이 tmux에서도 재현되므로 캡처 도구 탓이 아니다. `advance 줄번호`에서는 보이지 않았다.
+- 첫 `vars`가 TUI를 켜면 명령 창이 어긋나는 gdb 17.1의 문제가 있다. `gdbinit`의 훅이 막아 둔다(4.3).
 
 ## 2. Following structures
 
@@ -538,7 +538,7 @@ $5 = 13
 │ track <expr>  tk walk|deep|each …  untrack N..M  * moved  ? not visible here         │
 └──────────────────────────────────────────────────────────────────────────────────────┘
 multi-thre Thread 0x7ffff7fa47 (cmd) In: __GI___pthread_kill   L44   PC: 0x7ffff7ca61ac
-(gdb) runStarting program: /tmp/lab/bug
+Starting program: /tmp/lab/bug
 [Thread debugging using libthread_db enabled]
 Using host libthread_db library "/usr/lib/x86_64-linux-gnu/libthread_db.so.1".
 
@@ -567,9 +567,9 @@ __pthread_kill_implementation (threadid=<optimized out>, signo=6, no_tid=0)
 │ track <expr>  tk walk|deep|each …  untrack N..M  * moved  ? not visible here         │
 └──────────────────────────────────────────────────────────────────────────────────────┘
 multi-thre Thread 0x7ffff7fa47 (cmd) In: print_row             L87   PC: 0x555555555300
-Focus set to cmd window.
-(gdb) break print_row if i == 8
-(gdb) runStarting program: /tmp/lab/bug
+Breakpoint 1 at 0x1300: file /tmp/lab/bug.c, line 87.
+(gdb) run
+Starting program: /tmp/lab/bug
 [Thread debugging using libthread_db enabled]
 Using host libthread_db library "/usr/lib/x86_64-linux-gnu/libthread_db.so.1".
 
@@ -579,10 +579,9 @@ Breakpoint 1, print_row (tri=0x7fffffffd230, i=8) at /tmp/lab/bug.c:87
 
 ### 4.3 Pitfalls
 
-- `out` 레이아웃의 명령 창에서는 에코와 출력이 한 줄로 붙고(`(gdb) runStarting program: …`), `break`의 `Breakpoint 1 at …` 응답이 보이지 않는다. 같은 화면이 tmux `capture-pane`에서도 나와서 캡처 도구의 문제가 아니다.
+- gdb 17.1은 TUI를 처음 켜는 명령이 Python 명령이면(`vars`와 `out`이 그렇다) 그 뒤로 명령 창의 응답을 창이 아니라 터미널에 직접 쓴다. 에코와 출력이 한 줄로 붙고(`(gdb) runStarting program: …`), `Breakpoint 1 at …` 응답이 뒤늦게 나타났다 지워지고, `finish`의 줄 순서가 뒤바뀌고, `vars full`에서는 첫 `finish`가 화면을 깨뜨린다. `gdb.execute()`가 돌아올 때 TUI가 바꿔 둔 출력 경로를 되돌려 놓기 때문이다. `gdbinit`의 `hook-vars`·`hook-out`·`tui layout hook-vars`가 명령보다 먼저 `tui enable`을 실행해서 이를 막는다. 설정의 일부만 가져다 쓴다면 첫 `vars`나 `out` 전에 `tui enable`을 직접 치면 된다.
 - vars 창은 `nothing tracked yet`로 비어 있어도 화면의 3분의 1을 차지한다.
-- `vars full` 뒤에 `out`을 열면 명령 창이 3행인 채로 남는다(40행에서 out 18, vars 19, cmd 3). `out`은 명령 창 높이를 되돌려 주지 않기 때문이고, 새 세션에서 연 `out`은 13/14/13으로 나뉜다.
-- TUI의 명령 창에서는 `finish`처럼 여러 줄을 내는 명령의 출력이 순서가 뒤바뀌어 보이기도 한다. 1장의 화면에서 명령 창을 생략한 이유다.
+- `vars full` 뒤에 `out`이나 `vars`를 열면 명령 창 높이가 돌아오지만, 터미널 높이에 따라 한 행 어긋날 수 있다(24, 30, 36, 48행 등에서 확인했다).
 
 ## Index
 
