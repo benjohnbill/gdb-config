@@ -90,7 +90,10 @@ _note = None          # why the window is not capturing, when it is not
 _winsize = None       # the size last pushed onto the pty
 _pid = None           # the process the buffer belongs to
 
-_DIM = "\033[90m"
+# 38;5;244, not \033[90m: gdb 17 reads ANSI colour 8 as a different colour from the
+# `set style ... foreground 8` the borders use, and the second one gets curses slot 9
+# (bright red). Index 244 is the same colour on both paths. Keep it equal to gdbinit's.
+_DIM = "\033[38;5;244m"
 _OFF = "\033[0m"
 
 _TABSTOP = 8

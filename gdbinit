@@ -16,10 +16,15 @@ set tui active-border-mode normal
 # 그래서 슬롯을 직접 지정한다. 16색은 Zed 테마가 다음 값으로 그린다:
 #   기본전경 #564454 · 8(bright black) #745d71 · magenta #974787 · blue #8c4fa1
 #   green #427431 · yellow #82640c · red #bc3358
+# 회색은 8 이 아니라 244 로 지정한다. varwin.py·outwin.py 의 흐린 글씨도 38;5;244 다.
+# gdb 17 은 `set style` 의 8(XTERM_256 의 8)과 ANSI \033[90m 의 8(AIXTERM_16 의 8)을 서로
+# 다른 색으로 보고 curses 슬롯을 따로 나눠 주며, 터미널에는 번호가 아니라 슬롯이 간다
+# (첫 색 = 슬롯 8 = SGR 90, 둘째 색 = 슬롯 9 = SGR 91 = bright red). 16 이상의 번호는 두
+# 경로가 같은 색이라 슬롯도 하나다. 이 회색을 바꾸면 세 파일을 같이 바꿀 것.
 # 아래 두 블록(색 슬롯 + disassembler 스타일)은 gdb 16 문법이라 15 에서는 건너뛴다.
 # 컨테이너(gdb 15)는 기본색으로 뜬다. 색은 호스트 전용이니 문제 없다.
 if $_gdb_major >= 16
-  set style tui-border foreground 8
+  set style tui-border foreground 244
   set style tui-active-border foreground magenta
   set style tui-current-position on
 
@@ -37,9 +42,9 @@ if $_gdb_major >= 16
   set style title foreground magenta
   set style version foreground magenta
   set style command foreground none
-  set style line-number foreground 8
+  set style line-number foreground 244
   set style line-number intensity normal
-  set style metadata foreground 8
+  set style metadata foreground 244
   set style metadata intensity normal
 end
 
@@ -52,7 +57,7 @@ if $_gdb_major >= 16
   set style disassembler mnemonic foreground blue
   set style disassembler register foreground yellow
   set style disassembler immediate foreground yellow
-  set style disassembler comment foreground 8
+  set style disassembler comment foreground 244
   set style disassembler comment intensity normal
 end
 set history filename ~/.config/gdb/history

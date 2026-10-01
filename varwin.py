@@ -243,13 +243,17 @@ def _read_stable(expr):
 # 근사 매핑되며 엉뚱한 색이 되므로, 터미널이 테마 값으로 그려 주는 ANSI 16색
 # 인덱스만 쓴다. Zed 테마 XY-Zed Orchid Light 기준:
 #   39 기본 전경 #564454 · 90 bright_black #745d71 · 35 magenta #974787
+# 흐린 글씨는 \033[90m 이 아니라 38;5;244 로 쓴다. gdb 17 은 ANSI 의 8~15 를 AIXTERM_16
+# 색으로 읽는데 `set style … foreground 8` 은 XTERM_256 이라, 같은 8 이 서로 다른 색으로
+# 취급돼 둘째로 온 쪽이 curses 슬롯 9(SGR 91, bright red)를 받는다. 16 이상은 두 경로가
+# 같은 색이다. gdbinit 의 회색 스타일도 244 이니 같이 바꿀 것.
 _OFF   = "\033[0m"
 _NAME  = "\033[39m"   # 표현식 이름  — 기본 전경
 _VALUE = "\033[39m"   # 값
-_PUNCT = "\033[90m"   # = 기호
-_DIM   = "\033[90m"   # 번호 · 안내문
+_PUNCT = "\033[38;5;244m"   # = 기호
+_DIM   = "\033[38;5;244m"   # 번호 · 안내문
 _MARK  = "\033[35m"   # 바뀐 값      — 강조
-_OLD   = "\033[90m"   # 이전 값
+_OLD   = "\033[38;5;244m"   # 이전 값
 
 _ELLIPSIS = "…"
 _WRAP_INDENT = 4
