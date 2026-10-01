@@ -98,10 +98,10 @@ define rerun
   run
 end
 document rerun
-Rebuild first, then rerun: build the loaded executable, kill the old process,
-drop the source cache, run. A failed build stops here, so the process you
-were debugging stays alive. Takes no argument; "rebuild TARGET" builds one
-target by hand.
+Rebuild the loaded executable and run it again from the start.
+The order is rebuild, kill the old process, drop the source cache, run. A
+failed build stops before the kill, so the old process stays alive. Takes no
+argument; "rebuild TARGET" is for the make route, a "c dbg" record ignores it.
 end
 
 # A TUI window that redraws tracked expressions in place, instead of the
@@ -191,8 +191,10 @@ source ~/.config/gdb/snap.py
 #           64-row        52-row        40-row        30-row
 #   vars-even 21 22 21      17 18 17      13 14 13      10 10 10
 #   src-vars  28 15 21      23 12 17      18  9 13      13  7 10
-#   vars-full  - 58  3       - 46  3       - 34  3       - 24  3
-# (src, vars, cmd; the status window is one row at every size.)
+#   vars-full  - 60  3       - 48  3       - 36  3       - 26  3
+# (src, vars, cmd, counted as "info win" counts them, borders included. The
+# status window is one row at every size. Under "vars-full" the vars window
+# shows two rows fewer than it is tall; see _full_layout_height in varwin.py.)
 tui new-layout vars-even  src 1  vars 1  status 0  cmd 1
 tui new-layout src-vars   src 2  vars 1  status 0  cmd 1
 tui new-layout vars-full          vars 1  status 0  cmd 1

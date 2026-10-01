@@ -1381,8 +1381,9 @@ class CmdWinCommand(gdb.Command):
 
 Usage: cmdwin [ROWS]
 
-ROWS is a wish, not a demand: gdb caps it at the terminal height minus six,
-so a short terminal gets a shorter command window instead of a warning."""
+ROWS is a wish, not a demand: it is capped at the terminal height minus seven
+(gdb's own limit is six, and one more is kept as margin), so a short terminal
+gets a shorter command window instead of a warning."""
 
     def __init__(self):
         super().__init__("cmdwin", gdb.COMMAND_TUI)
@@ -1459,8 +1460,9 @@ other height for the command window. All three layouts are defined in
         gdb.execute("layout %s" % layout)
         _size_cmd_window(arg == "full", from_tty)
         # Focus on the command window, so the arrow keys walk the command
-        # history instead of scrolling the source. PageUp/PageDown still
-        # scroll the source, and "focus src" puts the arrows back.
+        # history instead of scrolling the source. PageUp and PageDown do
+        # nothing while it has focus (gdb 17.1); "focus src" gives them, and
+        # the arrows, back to the source.
         gdb.execute("focus cmd")
         active = gdb.execute("info display", to_string=True)
         if "There are no auto-display expressions now" not in active:
