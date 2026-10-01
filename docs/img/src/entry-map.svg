@@ -1,0 +1,81 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="352" viewBox="0 0 760 352">
+  <style>
+    .sans { font-family: 'IBM Plex Sans KR','Noto Sans CJK KR','Malgun Gothic',sans-serif; }
+    .mono { font-family: 'Sarasa Term K Nerd Font','D2Coding','DejaVu Sans Mono',monospace; }
+    .card { fill: #fcfcfb; stroke: #c3c2b7; }
+    .title { font-size: 15px; font-weight: 700; fill: #0b0b0b; }
+    .name { font-size: 13px; font-weight: 700; fill: #0b0b0b; }
+    .sub { font-size: 12px; fill: #52514e; }
+    .lab { font-size: 11.5px; fill: #52514e; }
+    .box { fill: #ffffff; stroke: #c3c2b7; stroke-width: 1.2; }
+    .gdb { fill: #e3eefb; stroke: #2a78d6; stroke-width: 1.4; }
+    .cfg { fill: #f6f5f1; stroke: #c3c2b7; stroke-width: 1.2; }
+    .chip { fill: #ffffff; stroke: #d8d7d0; stroke-width: 1; }
+    .ln { stroke: #52514e; stroke-width: 1.5; fill: none; }
+    .arrow { stroke: #52514e; stroke-width: 1.5; fill: none; marker-end: url(#a); }
+    .dash { stroke: #2a78d6; stroke-width: 1.9; stroke-dasharray: 6 4; fill: none; marker-end: url(#ab); }
+  </style>
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#52514e"/></marker>
+    <marker id="ab" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#2a78d6"/></marker>
+  </defs>
+  <rect class="card" x="0.5" y="0.5" width="759" height="351" rx="12"/>
+  <text class="sans title" x="16" y="30">gdb로 들어가는 길은 여섯 개이고, 읽는 설정은 하나다</text>
+
+  <!-- entries -->
+  <g>
+    <rect class="box" x="16" y="52" width="232" height="40" rx="8"/>
+    <text class="mono name" x="28" y="69">make g_NAME</text><text class="sans sub" x="28" y="85">week05 · week04</text>
+    <rect class="box" x="16" y="100" width="232" height="40" rx="8"/>
+    <text class="mono name" x="28" y="117">make gdb NAME=…</text><text class="sans sub" x="28" y="133">week05 upstream 타깃</text>
+    <rect class="box" x="16" y="148" width="232" height="40" rx="8"/>
+    <text class="mono name" x="28" y="165">make asan g_NAME</text><text class="sans sub" x="28" y="181">ASan 빌드 후 gdb</text>
+    <rect class="box" x="16" y="196" width="232" height="40" rx="8"/>
+    <text class="mono name" x="28" y="213">sc dbg</text><text class="sans sub" x="28" y="229">study-cli를 make 후 gdb</text>
+    <rect class="box" x="16" y="244" width="232" height="40" rx="8"/>
+    <text class="mono name" x="28" y="261">c dbg FILE.c</text><text class="sans sub" x="28" y="277">엄격한 플래그로 컴파일</text>
+    <rect class="box" x="16" y="292" width="232" height="40" rx="8"/>
+    <text class="mono name" x="28" y="309">make dg_NAME</text><text class="sans sub" x="28" y="325">컨테이너 안에서 gdb</text>
+  </g>
+
+  <!-- five host entries merge into one arrow -->
+  <path class="ln" d="M248,72 H282 M248,120 H282 M248,168 H282 M248,216 H282 M248,264 H282 M282,72 V264"/>
+  <path class="arrow" d="M282,168 H328"/>
+  <text class="sans lab" x="288" y="161">실행</text>
+
+  <!-- gdb boxes -->
+  <rect class="gdb" x="330" y="118" width="140" height="100" rx="8"/>
+  <text class="sans name" x="400" y="158" text-anchor="middle" style="font-size:15px">gdb 17.1</text>
+  <text class="sans sub" x="400" y="178" text-anchor="middle">호스트(WSL)</text>
+  <text class="sans sub" x="400" y="196" text-anchor="middle">입구 5개가 여기로</text>
+
+  <path class="arrow" d="M248,312 H328"/>
+  <text class="mono lab" x="254" y="305">docker run</text>
+  <rect class="gdb" x="330" y="286" width="140" height="52" rx="8"/>
+  <text class="sans name" x="400" y="308" text-anchor="middle" style="font-size:15px">gdb 15.1</text>
+  <text class="sans sub" x="400" y="326" text-anchor="middle">컨테이너 memdbg</text>
+
+  <!-- config -->
+  <rect class="cfg" x="548" y="52" width="196" height="268" rx="8"/>
+  <text class="mono name" x="560" y="74">~/.config/gdb/</text>
+  <text class="sans lab" x="560" y="91">gdbinit이 나머지를 불러온다</text>
+  <g>
+    <rect class="chip" x="560" y="100" width="172" height="22" rx="5"/><text class="mono sub" x="568" y="115">gdbinit</text><text class="sans lab" x="724" y="115" text-anchor="end">설정 · rerun</text>
+    <rect class="chip" x="560" y="126" width="172" height="22" rx="5"/><text class="mono sub" x="568" y="141">varwin.py</text><text class="sans lab" x="724" y="141" text-anchor="end">track · vars</text>
+    <rect class="chip" x="560" y="152" width="172" height="22" rx="5"/><text class="mono sub" x="568" y="167">each.py</text><text class="sans lab" x="724" y="167" text-anchor="end">each</text>
+    <rect class="chip" x="560" y="178" width="172" height="22" rx="5"/><text class="mono sub" x="568" y="193">walk.py</text><text class="sans lab" x="724" y="193" text-anchor="end">walk</text>
+    <rect class="chip" x="560" y="204" width="172" height="22" rx="5"/><text class="mono sub" x="568" y="219">deep.py</text><text class="sans lab" x="724" y="219" text-anchor="end">deep</text>
+    <rect class="chip" x="560" y="230" width="172" height="22" rx="5"/><text class="mono sub" x="568" y="245">snap.py</text><text class="sans lab" x="724" y="245" text-anchor="end">snap · back</text>
+    <rect class="chip" x="560" y="256" width="172" height="22" rx="5"/><text class="mono sub" x="568" y="271">outwin.py</text><text class="sans lab" x="724" y="271" text-anchor="end">out</text>
+    <rect class="chip" x="560" y="282" width="172" height="22" rx="5" style="stroke:#2a78d6;stroke-width:1.4"/><text class="mono sub" x="568" y="297">rebuild.py</text><text class="sans lab" x="724" y="297" text-anchor="end">rebuild</text>
+  </g>
+
+  <path class="arrow" d="M470,168 H546"/>
+  <text class="sans lab" x="474" y="161">시작 시 읽음</text>
+  <path class="arrow" d="M470,312 H546"/>
+  <text class="sans lab" x="474" y="305">마운트(rw)</text>
+
+  <!-- the one non-obvious link: c dbg leaves a record that rebuild replays -->
+  <path class="dash" d="M248,276 H520 V293 H558"/>
+  <text class="sans lab" x="306" y="270">FILE.build 기록 → rerun이 재생</text>
+</svg>

@@ -1,0 +1,75 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="380" viewBox="0 0 760 380">
+  <style>
+    .sans { font-family: 'IBM Plex Sans KR','Noto Sans CJK KR','Malgun Gothic',sans-serif; }
+    .mono { font-family: 'Sarasa Term K Nerd Font','D2Coding','DejaVu Sans Mono',monospace; }
+    .card { fill: #fcfcfb; stroke: #c3c2b7; }
+    .title { font-size: 15px; font-weight: 700; fill: #0b0b0b; }
+    .head { font-size: 12px; font-weight: 700; fill: #52514e; }
+    .row { fill: #ffffff; stroke: #d8d7d0; stroke-width: 1.2; }
+    .d1 { font-size: 13px; font-weight: 700; fill: #0b0b0b; }
+    .d2 { font-size: 12px; fill: #52514e; }
+    .cmd { font-size: 13px; font-weight: 700; fill: #0b0b0b; }
+    .tk { fill: #1c5cab; }
+    .note { font-size: 11.5px; fill: #52514e; }
+    .node { fill: #f1f0ec; stroke: #898781; stroke-width: 1.1; }
+    .nx { stroke: #898781; stroke-width: 1.1; }
+    .ln { stroke: #898781; stroke-width: 1.2; fill: none; }
+    .arrow { stroke: #898781; stroke-width: 1.2; fill: none; marker-end: url(#g); }
+    .join { stroke: #2a78d6; stroke-width: 1.6; fill: none; marker-end: url(#b); }
+    .tiny { font-size: 10px; fill: #52514e; }
+  </style>
+  <defs>
+    <marker id="g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#898781"/></marker>
+    <marker id="b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#2a78d6"/></marker>
+  </defs>
+  <rect class="card" x="0.5" y="0.5" width="759" height="379" rx="12"/>
+  <text class="sans title" x="16" y="28">모양이 명령을 고르고, track을 앞에 붙이면 결과가 vars 창에 고정된다</text>
+  <text class="sans head" x="28" y="54">찾는 대상의 모양</text>
+  <text class="sans head" x="268" y="54">한 번 출력</text>
+  <text class="sans head" x="520" y="54">vars 창에 고정</text>
+  <rect class="row" x="16" y="62" width="728" height="96" rx="8"/>
+  <rect class="node" x="28" y="82" width="28" height="20" rx="3"/><line class="nx" x1="46" y1="82" x2="46" y2="102"/>
+  <path class="arrow" d="M51,92 H70"/>
+  <rect class="node" x="72" y="82" width="28" height="20" rx="3"/><line class="nx" x1="90" y1="82" x2="90" y2="102"/>
+  <path class="arrow" d="M95,92 H114"/>
+  <rect class="node" x="116" y="82" width="28" height="20" rx="3"/><line class="nx" x1="134" y1="82" x2="134" y2="102"/>
+  <path class="arrow" d="M139,92 H158"/>
+  <rect class="node" x="160" y="82" width="28" height="20" rx="3"/><line class="nx" x1="178" y1="82" x2="178" y2="102"/>
+  <path class="arrow" d="M183,92 H200"/><text class="mono tiny" x="203" y="96">NULL</text>
+  <text class="sans d1" x="28" y="136">자기 자신을 가리키는 사슬</text>
+  <text class="sans d2" x="28" y="152">연결 리스트, 트리의 한쪽 방향</text>
+  <text class="mono cmd" x="268" y="96">walk EXPR [FIELD]</text>
+  <text class="sans note" x="268" y="118">노드를 한 줄씩, 최대 200개</text>
+  <text class="sans note" x="268" y="136">$N 번호는 만들지 않는다</text>
+  <path class="join" d="M448,92 H510"/><text class="mono tiny" x="451" y="86">+ track</text>
+  <text class="mono cmd" x="520" y="96"><tspan class="tk">track</tspan> walk EXPR N [FIELD]</text>
+  <text class="sans note" x="520" y="118">처음 N개 노드가 행 하나씩</text>
+  <rect class="row" x="16" y="164" width="728" height="96" rx="8"/>
+  <rect class="node" x="100" y="174" width="40" height="12" rx="3"/>
+  <rect class="node" x="56" y="192" width="40" height="12" rx="3"/><rect class="node" x="144" y="192" width="40" height="12" rx="3"/>
+  <rect class="node" x="56" y="210" width="40" height="12" rx="3"/>
+  <path class="ln" d="M112,186 L80,192 M128,186 L164,192 M76,204 V210"/>
+  <text class="sans d1" x="28" y="238">구조체와 거기서 닿는 구조체</text>
+  <text class="sans d2" x="28" y="254">포인터로 이어진 중첩 구조</text>
+  <text class="mono cmd" x="268" y="198">deep EXPR N</text>
+  <text class="sans note" x="268" y="220">깊이 N까지, 최대 200항목</text>
+  <text class="sans note" x="268" y="238">$N 번호가 붙는다</text>
+  <path class="join" d="M448,194 H510"/><text class="mono tiny" x="451" y="188">+ track</text>
+  <text class="mono cmd" x="520" y="198"><tspan class="tk">track</tspan> deep EXPR N</text>
+  <text class="sans note" x="520" y="220">EXPR과 닿는 구조체 전부가 행</text>
+  <rect class="row" x="16" y="266" width="728" height="96" rx="8"/>
+  <rect class="node" x="28" y="286" width="30" height="22" rx="0"/><text class="mono tiny" x="43" y="301" text-anchor="middle">[0]</text>
+  <rect class="node" x="58" y="286" width="30" height="22" rx="0"/><text class="mono tiny" x="73" y="301" text-anchor="middle">[1]</text>
+  <rect class="node" x="88" y="286" width="30" height="22" rx="0"/><text class="mono tiny" x="103" y="301" text-anchor="middle">[2]</text>
+  <rect class="node" x="118" y="286" width="30" height="22" rx="0"/><text class="mono tiny" x="133" y="301" text-anchor="middle">[3]</text>
+  <rect class="node" x="148" y="286" width="30" height="22" rx="0"/><text class="mono tiny" x="163" y="301" text-anchor="middle">[4]</text>
+  <rect class="node" x="178" y="286" width="30" height="22" rx="0"/><text class="mono tiny" x="193" y="301" text-anchor="middle">[5]</text>
+  <text class="sans d1" x="28" y="340">배열의 원소, 구조체의 멤버</text>
+  <text class="sans d2" x="28" y="356">범위 0..n 또는 ->*</text>
+  <text class="mono cmd" x="268" y="300">each [/FMT] PATTERN</text>
+  <text class="sans note" x="268" y="322">별칭 e, 서식 글자 하나만</text>
+  <text class="sans note" x="268" y="340">$N 번호가 붙는다</text>
+  <path class="join" d="M448,296 H510"/><text class="mono tiny" x="451" y="290">+ track</text>
+  <text class="mono cmd" x="520" y="300"><tspan class="tk">track</tspan> each [/FMT] PATTERN</text>
+  <text class="sans note" x="520" y="322">원소·멤버마다 행 하나</text>
+</svg>
