@@ -48,5 +48,12 @@ raises("walk: two candidates are refused", "next, prev", out, "walk dhead")
 raises("walk: a chainless struct is refused", "no field of Plain", out, "walk plain")
 raises("walk: a scalar is refused", "struct or a pointer", out, "walk scalar")
 raises("walk: the usage is shown", "usage: walk", out, "walk")
+raises("walk: a command name in the expression slot is caught",
+       "deep is a command, not an expression", out, "walk deep next")
+
+# The other half of that guard: a name it knows is still just a name when the
+# program actually has one, which is why the guard asks gdb before refusing.
+check("walk: a variable named after a command is still an expression",
+      len(rows(out("walk p next"))), 5)
 
 harness.report("walk command")

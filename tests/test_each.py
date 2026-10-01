@@ -1,6 +1,7 @@
 """each: the scanner, expand(), the printing command, and "track each"."""
 
 import os
+import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -18,6 +19,14 @@ labels = harness.labels
 
 def run(command):
     return gdb.execute(command, to_string=True)
+
+
+def bare(line):
+    """One output line without its "$N".
+
+    The number depends on how many values the session has already kept, so
+    it is asserted on its own and taken off everywhere else."""
+    return re.sub(r"^\$\d+ ?", "", line, count=1)
 
 
 def run_raises(name, fragment, command):
@@ -111,10 +120,6 @@ check("expand: the default token applies at the top level only",
 # ── what expand() refuses ────────────────────────────────────────────────
 raises("refuse: [..] on a pointer asks for both bounds", "give both bounds",
        each.expand, "s.items[0][..]")
-raises("refuse: a bare pointer to a scalar asks for both bounds",
-       "give both bounds", each.expand, "&s.count")
-raises("refuse: a bare scalar has nothing to step through",
-       "nothing to step through", each.expand, "s.count")
 raises("refuse: .* on a scalar", "needs a struct", each.expand, "s.count.*")
 raises("refuse: [..] on a scalar", "needs an array", each.expand, "s.count[..]")
 raises("refuse: a backwards range", "runs backwards",
@@ -132,19 +137,58 @@ raises("refuse: a misspelt member is reported as such", "no member named",
 raises("refuse: the limit is applied while expanding", "more than 8",
        each.expand, "s.items[0..100000]", "each", 8)
 raises("refuse: the message names the command", "tk each:",
-       each.expand, "s.count", "tk each")
+       each.expand, "s.count.*", "tk each")
+
+# ── what has no parts stands for itself ──────────────────────────────────
+# A scalar was refused until "each" took over what "print" does. The refusal
+# for an explicit [..] on a pointer stays: there a length was asked for.
+check("expand: a bare scalar is its own single entry",
+      labels(each.expand("s.count")), ["s.count"])
+check("expand: a bare pointer to a scalar is its own single entry",
+      labels(each.expand("&s.count")), ["&s.count"])
+check("expand: a bare pointer to a struct still steps through its members",
+      labels(each.expand("s.items[0]")), ["s.items[0]->vtbl", "s.items[0]->id",
+                                          "s.items[0]->closed",
+                                          "s.items[0]->label"])
+check("token_for_type: nothing to step through is the empty token",
+      each.token_for_type(gdb.parse_and_eval("s.count").type), "")
 
 # ── the printing command ─────────────────────────────────────────────────
 out = run("each s.items[0..3]->id").splitlines()
 check("each: one line per entry", len(out), 4)
-check("each: a line is label = value", out[0], "s.items[0]->id = 10")
+check("each: a line is $N label = value", bare(out[0]), "s.items[0]->id = 10")
+check("each: a line opens with a history number",
+      re.match(r"^\$\d+ s\.items", out[0]) is not None, True)
 check("each: a NULL slot is reported in place and the rest go on",
       out[1].startswith("s.items[1]->id = <Cannot access memory"), True)
-check("each: the last entry is printed", out[3], "s.items[3]->id = 13")
+check("each: an entry with no value gets no number",
+      out[1].startswith("$"), False)
+check("each: the last entry is printed", bare(out[3]), "s.items[3]->id = 13")
 check("each: a format letter is applied",
-      run("each /x s.items[0..3]->id").splitlines()[0], "s.items[0]->id = 0xa")
+      bare(run("each /x s.items[0..3]->id").splitlines()[0]),
+      "s.items[0]->id = 0xa")
 check("each: a bare struct prints its members",
       len(run("each s").splitlines()), 2)
+
+# ── the history, and what a value with no parts looks like ───────────────
+line = run("each s.count").strip()
+check("each: a value with no parts drops the label, as print does",
+      re.match(r"^\$\d+ = 4$", line) is not None, True)
+kept = int(line.split(" ", 1)[0][1:])
+check("each: the number reads the value back",
+      int(gdb.parse_and_eval("$%d" % kept)), 4)
+check("each: an expanded entry is kept too",
+      int(gdb.parse_and_eval(run("each s.items[0..0]->id").split(" ", 1)[0])),
+      10)
+
+# A side effect must fire as many times as "print" fires it: once. expand()
+# asks for the type and the printing then reads the value, so a scalar must
+# not take that route at all.
+run("set var s.count = 4")
+run("each s.count++")
+check("each: a side effect happens exactly once",
+      int(gdb.parse_and_eval("s.count")), 5)
+run("set var s.count = 4")
 run_raises("each: a memory format is sent to x", "single format letter",
            "each /4xg s.items[0..1]")
 run_raises("each: no pattern shows the usage", "usage: each", "each")
@@ -278,6 +322,27 @@ run("untrack s.items[0..1]")
 check("sugar: untrack takes the pattern too", "each s.items[0..1]" in groups(), False)
 run("untrack s.items[]")
 check("sugar: untrack left the plain row alone", varwin._exprs, ["s.items"])
+
+# ── "e", the short name, in the subcommand slot ──────────────────────────
+# gdbinit aliases the command itself; a subcommand is matched by text, so
+# varwin has to know the short name as well. The tests run with --nx and
+# never see gdbinit, which is why this is asserted here and not on "e".
+reset()
+run("track e s.items[0..1]")
+check('tk e: the short name reaches "track each"',
+      groups(), ["each s.items[0..1]"])
+check("tk e: the group is named as if \"each\" had been typed",
+      shown(), ["s.items[0]", "s.items[1]"])
+run("untrack e s.items[0..1]")
+check('utk e: the short name reaches "untrack each"', varwin._exprs, [])
+run_raises("tk e: a closed pattern still reports its group as each",
+           "no group named \"each s.items[0..1]\"",
+           "untrack e s.items[0..1]")
+reset()
+run("track e")
+check("tk e: one token alone is an expression, not the subcommand",
+      varwin._exprs, ["e"])
+check("tk e: that row belongs to no group", groups(), [])
 run("track -l /x s.items[2..3]")
 check("sugar: -l and a format travel with the pattern",
       [varwin._labels[e] for e in varwin._exprs if e.startswith("/x *(")],
@@ -313,5 +378,8 @@ check("dead tails: an each group is never collapsed",
 reset()
 run_raises("walk: its usage is unchanged", "usage: tk walk EXPR DEPTH",
            "track walk s")
+
+run_raises("each: a command name in the pattern slot is caught",
+           "deep is a command, not an expression", "each deep s 3")
 
 harness.report("each")

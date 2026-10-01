@@ -11,6 +11,7 @@ failed=0
 for pair in test_chain.py:chains \
             test_tree.py:chains \
             test_deep.py:widgets \
+            test_deep_command.py:widgets \
             test_each.py:widgets \
             test_track.py:chains \
             test_walk_command.py:chains \

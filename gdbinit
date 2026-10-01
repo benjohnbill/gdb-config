@@ -110,8 +110,12 @@ end
 # "track walk EXPR DEPTH" and "track deep EXPR DEPTH" put a whole chain or a
 # whole structure on the board at once; "untrack walk EXPR" takes it back.
 # "track each PATTERN" (or just "track tri[0..5]") puts one row per element
-# or member; "each PATTERN" prints the same lines once, like "print".
-# Short names for the three typed most often are set up below: tk / itk / utk
+# or member; "each PATTERN" prints the same lines once. A value with no parts
+# to step through prints as it stands, numbered "$N" the way "print" numbers
+# its own, so "each" is a "print" that expands as well and there is rarely a
+# reason to type the other one.
+# Short names for the ones typed most often are set up below: tk / itk / utk
+# and e, which works in the subcommand slot too ("tk e tri[0..5]").
 # chase.py needs no "source" line: varwin and walk import it themselves.
 # each.py needs none either: varwin imports it, and that import is what
 # registers "each". Sourcing it would put its helpers in the shared __main__.
@@ -144,6 +148,19 @@ end
 # advance, so it works on this week's ListNode and on anything later.
 # Its traversal lives in chase.py, shared with "track walk" above.
 source ~/.config/gdb/walk.py
+
+# "deep EXPR DEPTH" prints what "track deep EXPR DEPTH" would put in the vars
+# window: EXPR and every struct it reaches, DEPTH levels out. The traversal is
+# chase.deep(), shared with that command, so a level means the same thing in
+# both. Each line is numbered "$N" the way "print" numbers its own.
+#
+# Imported rather than sourced. It borrows each.py's line numbering, and a
+# sourced file would mix the helpers of both into gdb's shared __main__; the
+# "import outwin" comment above tells that story in full. sys.path was set
+# there, so this needs only the import.
+python
+import deep
+end
 
 # "snap" / "snaps" / "back" are named checkpoints. Plain "restart" consumes a
 # checkpoint the moment you run forward from it; "back" re-takes it instead.
@@ -196,6 +213,15 @@ tui new-layout out       out 1  vars 1  status 0  cmd 1
 alias tk = track
 alias itk = info track
 alias utk = untrack
+
+# "each" is typed as often as "print" is, because it does what print does
+# and expands as well, so it gets the shortest name left. On its own "e" is
+# ambiguous (echo, edit, enable, eval, exit, explore), and an alias settles
+# it: gdb prefers an exact name over any abbreviation. "edit" loses its
+# one-letter form, which costs nothing here, where the editor is elsewhere.
+# varwin spells "e" out again for "tk e PATTERN"; a subcommand is matched by
+# text and does not see the command table.
+alias e = each
 
 # The old "dbg" was "tui enable" plus "cmdwin". The "vars" command does both
 # and focuses the command window as well, so dbg is now just the name for the

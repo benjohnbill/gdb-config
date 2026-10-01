@@ -13,6 +13,7 @@ DNode *dhead;    /* 2 nodes, next and prev both present */
 TNode *root;     /* a small binary tree */
 Plain plain;     /* no pointer members at all */
 int scalar = 7;
+Node *p;         /* a variable named after a command: "walk p next" must work */
 
 static Node *node_new(int item, Node *next) {
     Node *n = malloc(sizeof *n);
@@ -44,6 +45,8 @@ static void build(void) {
     dhead->next->prev = dhead;
 
     root = tnode(1, tnode(2, tnode(4, NULL, NULL), NULL), tnode(3, NULL, NULL));
+
+    p = head;
 
     plain.a = 5;
     plain.name[0] = 'h'; plain.name[1] = 'i'; plain.name[2] = '\0';

@@ -1,12 +1,16 @@
 """Turn one pattern into the expressions for each element or member it names.
 
-"tk walk" and "tk deep" choose how far to follow pointers. This module answers
+"walk" and "deep", tracked or printed, choose how far to follow pointers. This
+module answers
 a different question: which elements of an array, or which members of a
 struct, one at a time, the way a for loop would visit them.
 
     each [/FMT] PATTERN             print once, one line per expansion
     track each [-l] [/FMT] PATTERN  one row per expansion in the vars window
     untrack each PATTERN            remove what "track each PATTERN" added
+
+"e" is the alias gdbinit gives "each", and the subcommands answer to it as
+well, so "tk e tri[0..5]" is "track each tri[0..5]".
 
 A pattern is an ordinary expression with any number of these tokens in it:
 
@@ -16,8 +20,10 @@ A pattern is an ordinary expression with any number of these tokens in it:
               missing side from the declaration. [] means the same as [..]
     .*  ->*   every named member of the struct at that position
     (none)    no token at all: an array is stepped through element by
-              element, a struct (or a pointer to one) member by member. A
-              pointer to anything else has no length, so it is refused.
+              element, a struct (or a pointer to one) member by member.
+              Anything else has no parts to walk and stands for itself, so
+              that "each x" shows what "print x" shows. An explicit [..] on
+              a pointer is still refused: there the length was asked for.
 
 Tokens nest and combine, outer first: s.items[0..1]->* is the members of
 s.items[0], then the members of s.items[1].
@@ -210,20 +216,29 @@ def _struct_behind(prefix, token, cmd):
     return behind
 
 
-def _default_token(pattern, cmd):
-    """The token a pattern without one is given, chosen by its type."""
-    declared = _type_of(pattern, cmd)
+def token_for_type(declared):
+    """The token a value of this type is stepped through with.
+
+    "" when the type has no parts to step through. Such a value is one entry,
+    itself, rather than a refusal: "each" is meant to be the only word needed
+    to look at a value, and refusing the scalars would send the user back to
+    "print" for half of them. A pointer to a non-struct lands here too. Its
+    length is unknown, but so is its owner's intent, and the honest reading
+    of a bare pointer is the pointer, exactly as "print" reads it. Asking for
+    the length explicitly, with [..], is still refused by _bounds."""
     if declared.code == gdb.TYPE_CODE_ARRAY:
         return "[..]"
     if declared.code in _STRUCTS:
         return ".*"
-    if declared.code == gdb.TYPE_CODE_PTR:
-        if declared.target().strip_typedefs().code in _STRUCTS:
-            return "->*"
-        raise _unknown_length(pattern, declared, cmd)
-    raise EachError(
-        "%s: %s is %s; there is nothing to step through. each takes an "
-        "array, a struct, or a pointer to a struct." % (cmd, pattern, declared))
+    if (declared.code == gdb.TYPE_CODE_PTR
+            and declared.target().strip_typedefs().code in _STRUCTS):
+        return "->*"
+    return ""
+
+
+def _default_token(pattern, cmd):
+    """The token a pattern without one is given, chosen by its type."""
+    return token_for_type(_type_of(pattern, cmd))
 
 
 # ── the expansion ────────────────────────────────────────────────────────
@@ -280,18 +295,39 @@ def expand(pattern, cmd="each", limit=None):
 
 # ── the printing command ─────────────────────────────────────────────────
 
+def print_entry(value, label, options):
+    """One line, numbered the way gdb numbers "print", and kept in history.
+
+    The number comes first, as "$1 = ..." does, so a line can be read back
+    with "$N" and used in the next expression. The label sits between the
+    number and the value; it is left out when it would only repeat the text
+    the user typed.
+
+    Public because "deep" prints the same kind of list from a different
+    traversal, and one numbering habit has to serve both."""
+    text = value.format_string(**options)
+    number = gdb.add_history(value)
+    return "$%d%s = %s" % (number, " " + label if label else "", text)
+
+
 class EachCommand(gdb.Command):
     """Print each element or member a pattern names, one per line.
 
 Usage: each [/FMT] PATTERN
+       e [/FMT] PATTERN
 
     each tri[0..5]              tri[0] to tri[5], one line each
     each s.items[..]            every slot the array declares ([] works too)
     each s.items[0..3]->id      one member across several elements
     each s                      every member of a struct, or of *pointer
+    each n                      a value with no parts: what "print n" shows
     each /x tri[0..rows-1]      one format letter, as "print /x" takes it
 
-"tk each PATTERN" puts the same lines in the vars window and keeps them
+Every line is numbered as "print" numbers its own, so "$3" reads one back.
+A value with nothing to step through is printed as it stands, which makes
+"each" a "print" that also expands; "e" is the short name for it.
+
+"tk e PATTERN" puts the same lines in the vars window and keeps them
 current; see "help track". A memory format such as /4xg belongs to "x".
 Tab completion works up to the first token."""
 
@@ -311,19 +347,36 @@ Tab completion works up to the first token."""
                     % (fmt, _VALUE_FORMATS))
         if not arg:
             raise gdb.GdbError("usage: each [/FMT] PATTERN")
+        # "each deep s 3" is the keyword from "tk deep" carried over to a
+        # command that takes no keyword. Caught here so the reader hears
+        # that, rather than gdb's report of a symbol named "deep".
+        chase.reject_command_word(arg.split(), "each")
         # "set print pretty on" would break a struct element over several
         # lines and split one entry across rows, as walk.py already found.
         options = {"pretty_structs": False}
         if fmt:
             options["format"] = fmt
+        # A value with no parts is its own answer, and it is evaluated here,
+        # once, instead of going through expand(). expand() would ask for its
+        # type and then the caller would read it again, which "each i++" must
+        # not do: it has to move the counter exactly as far as "print i++"
+        # moves it. An array or struct takes the second read, but reading the
+        # name of one has no effect to repeat.
+        if _first_token(arg) is None:
+            value = chase.evaluate(arg, "each")
+            if not token_for_type(value.type.strip_typedefs()):
+                print(print_entry(value, None, options))
+                return
         for expression, label in expand(arg, "each"):
             try:
-                text = gdb.parse_and_eval(expression).format_string(**options)
+                line = print_entry(gdb.parse_and_eval(expression), label,
+                                  options)
             except gdb.error as err:
                 # A NULL slot or freed memory is one bad entry, not a reason
                 # to stop the others; the reason goes where the value would.
-                text = "<%s>" % err
-            print("%s = %s" % (label, text))
+                # There is no value to keep, so the entry gets no number.
+                line = "%s = <%s>" % (label, err)
+            print(line)
 
 
 EachCommand()

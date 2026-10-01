@@ -83,6 +83,8 @@ node has exactly one field that points at its own type."""
         tokens = arg.split()
         if not tokens or len(tokens) > 2:
             raise gdb.GdbError("usage: walk EXPR [FIELD]")
+        # "walk deep s" is another command's name in the expression slot.
+        chase.reject_command_word(tokens, "walk")
         expr = tokens[0]
         requested = tokens[1] if len(tokens) == 2 else None
 

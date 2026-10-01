@@ -26,8 +26,12 @@ A whole structure goes in with one command, and comes back out with one:
     untrack deep EXPR               remove what "track deep EXPR" added
     untrack each PATTERN            remove what "track each PATTERN" added
 
+All three print once, without the window, under the names "walk EXPR
+[FIELD]", "deep EXPR DEPTH" and "each [/FMT] PATTERN".
+
 A pattern with a token in it needs no keyword: "track tri[0..5]" and
-"untrack tri[0..5]" are the each forms. The group is named by the pattern as
+"untrack tri[0..5]" are the each forms. "each" answers to "e" here as well
+as on its own, so "tk e tri[0..5]" is the same command. The group is named by the pattern as
 typed, so "track tri[3..5]" adds a second group beside "track tri[0..2]"
 rather than replacing it, and "untrack" takes the same text. The grammar is
 in each.py.
@@ -803,6 +807,17 @@ def _pinned(expr):
 # "track tri[0..5]" arrives here too.
 _GROUP_MODES = ("walk", "deep", "each")
 
+# gdbinit gives "each" the short name "e", and a subcommand is matched by
+# text, not by the command table, so the short name has to be spelled out
+# here for "tk e tri[0..5]" to reach the same place as "tk each".
+_MODE_ALIASES = {"e": "each"}
+
+
+def _group_mode(token):
+    """The group mode a first token names, or None when it names none."""
+    mode = _MODE_ALIASES.get(token, token)
+    return mode if mode in _GROUP_MODES else None
+
 
 def _available_rows():
     """How many more rows the window can take.
@@ -837,13 +852,23 @@ def _drop_group(group):
 def _expand(mode, name, expr, depth, field, limit):
     """The (expression, label) pairs for one expansion.
 
-    The two chain refusals are rewritten here rather than in chase, because
-    only this layer knows that the other command exists and that the field
-    goes after the depth."""
+    The refusals are rewritten here rather than in chase, because only this
+    layer knows that the other commands exist and that the field goes after
+    the depth."""
     try:
         if mode == "walk":
             return chase.chain(expr, depth, field, cmd=name)
         return chase.deep(expr, depth, cmd=name, limit=limit)
+    except chase.NotAStruct as err:
+        # An array cannot be a starting point, but each of its elements can,
+        # and "tk each" takes the whole run. Anything else that is not a
+        # struct has no second reading, so its refusal stands as chase wrote it.
+        if not err.elements_are_structs:
+            raise
+        raise gdb.GdbError(
+            '%s: %s is %s. %s starts at one struct. '
+            'try "%s %s[0] %d", or "tk each %s" for a row per element.'
+            % (name, expr, err.declared, mode, name, expr, depth, expr))
     except chase.NoChainField as err:
         raise gdb.GdbError(
             '%s: %s has no field that points to %s. '
@@ -1049,6 +1074,7 @@ Usage: track [-l|-location] EXPR
        track walk EXPR DEPTH [FIELD]     the first DEPTH nodes of a chain
        track deep EXPR DEPTH             EXPR and what it reaches, DEPTH levels
        track each [/FMT] PATTERN         one row per element or member
+       track e [/FMT] PATTERN            the same, under each's short name
 
 The expression is re-evaluated at every stop and shown on its own row, which
 is overwritten rather than appended to. Compare "display", which scrolls.
@@ -1060,7 +1086,10 @@ address it referred to, so it survives leaving the frame. Compare
 A PATTERN is an expression with [A..B], [..], [] or .* in it: tri[0..5],
 s.items[], s.items[0..3]->id, s.*. Such a pattern needs no "each" in front
 of it. "track each EXPR" with no token steps through an array or a struct
-whole. See "help each" for the grammar."""
+whole. See "help each" for the grammar.
+
+"walk", "deep" and "each" print these same three expansions once, without
+the window."""
 
     def __init__(self):
         # The third argument is the completer. Without it a gdb.Command
@@ -1076,8 +1105,9 @@ whole. See "help each" for the grammar."""
         # subcommand. This is the same bargain the "print"/"p" guard below
         # already makes.
         tokens = arg.split()
-        if len(tokens) >= 2 and tokens[0] in _GROUP_MODES:
-            _track_group(tokens)
+        mode = _group_mode(tokens[0]) if tokens else None
+        if len(tokens) >= 2 and mode:
+            _track_group([mode] + tokens[1:])
             return
         # A pattern such as tri[0..5] or s.* cannot be a C expression, so it
         # needs no keyword: it is "track each" whether or not that was typed.
@@ -1154,7 +1184,8 @@ Usage: untrack N [N ...]          the rows numbered N, see "info track"
        untrack 6..   untrack ..4  from row 6 to the last; from the first to row 4
 
 "untrack walk EXPR", "untrack deep EXPR" and "untrack each PATTERN" take
-back what the matching "track" put in. A pattern with a token in it needs
+back what the matching "track" put in, and "untrack e PATTERN" is the same
+as the last of those. A pattern with a token in it needs
 no keyword here either: "untrack tri[0..5]", spelled as it was tracked. A
 group added as "track each s.items" (no token) is removed with "untrack each
 s.items" or by number."""
@@ -1172,10 +1203,11 @@ s.items" or by number."""
         # twelve numbers, and they shift as soon as one is removed.
         tokens = arg.split()
         group = None
-        if len(tokens) >= 2 and tokens[0] == "each":
+        mode = _group_mode(tokens[0]) if tokens else None
+        if len(tokens) >= 2 and mode == "each":
             group = _group_key("each", _split_format(" ".join(tokens[1:]))[1])
-        elif len(tokens) == 2 and tokens[0] in _GROUP_MODES:
-            group = _group_key(*tokens)
+        elif len(tokens) == 2 and mode:
+            group = _group_key(mode, tokens[1])
         elif each.has_pattern(arg):
             # The same sugar "track" takes, and the same key it built: the
             # format prefix is not part of the group's name.

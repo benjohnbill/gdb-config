@@ -32,7 +32,18 @@ class ChaseError(gdb.GdbError):
 
 
 class NotAStruct(ChaseError):
-    """The expression is not a struct and not a pointer to one."""
+    """The expression is not a struct and not a pointer to one.
+
+    The caller decides what to suggest instead, and an array is the case
+    worth suggesting for: its elements may each be a struct, so one element
+    is a start and "each" shows them all. This module knows neither command
+    exists, so the type travels with the error rather than only inside the
+    message."""
+
+    def __init__(self, message, declared=None, elements_are_structs=False):
+        super().__init__(message)
+        self.declared = declared
+        self.elements_are_structs = elements_are_structs
 
 
 class NoChainField(ChaseError):
@@ -94,6 +105,33 @@ def _require_depth(depth, cmd):
         raise ChaseError("%s: depth must be at least 1" % cmd)
 
 
+# The words a user types where an expression belongs, once they have read
+# "tk walk" or "tk deep" and carried the keyword over to a command that takes
+# no keyword. gdb answers "walk deep s" with "No symbol "deep" in current
+# context", which sends the reader looking for a variable that was never
+# meant to exist.
+_COMMAND_WORDS = ("walk", "deep", "each", "e", "print", "p", "track", "tk",
+                  "display")
+
+
+def reject_command_word(tokens, cmd):
+    """Refuse an argument list that starts with another command's name.
+
+    Only a list of two or more is judged: a single token IS the expression.
+    And a name that does evaluate here is left alone, because "p", "e" and
+    "each" are all ordinary variable names in list code and "walk p next"
+    has to keep working. So the refusal only lands where gdb was going to
+    report a missing symbol anyway, and says what that symbol really is."""
+    if len(tokens) < 2 or tokens[0] not in _COMMAND_WORDS:
+        return
+    try:
+        gdb.parse_and_eval(tokens[0])
+    except gdb.error:
+        raise ChaseError(
+            "%s: %s is a command, not an expression. "
+            "type it on its own: %s" % (cmd, tokens[0], " ".join(tokens)))
+
+
 # ── type questions ───────────────────────────────────────────────────────
 
 def type_display_name(value):
@@ -118,6 +156,28 @@ def named_fields(struct_type):
         if field.name is None or field.is_base_class:
             continue
         yield field
+
+
+def leads_to_struct(pointer_type):
+    """True when this pointer type points at a struct or union.
+
+    A void *, a function pointer and an int * are all skipped. Their value is
+    already on the parent's own row, and none of them has hidden members that
+    a row of their own would reveal."""
+    if pointer_type.code != gdb.TYPE_CODE_PTR:
+        return False
+    return pointer_type.target().strip_typedefs().code in _STRUCTS
+
+
+def array_of_structs(declared):
+    """True when this array holds structs, or pointers to them.
+
+    Asked only to word a refusal: an array cannot be a starting point, but
+    each of its elements can be, and that is worth saying."""
+    if declared.code != gdb.TYPE_CODE_ARRAY:
+        return False
+    element = declared.target().strip_typedefs()
+    return element.code in _STRUCTS or leads_to_struct(element)
 
 
 def points_at(field, struct_type):
@@ -155,7 +215,7 @@ def node_type(value, cmd="walk"):
         return stripped, value.address
     raise NotAStruct(
         "%s: needs a struct or a pointer to one. this is %s"
-        % (cmd, value.type))
+        % (cmd, value.type), stripped, array_of_structs(stripped))
 
 
 def choose_field(struct_type, requested, cmd="walk", name=None):
@@ -237,17 +297,6 @@ def chain(expr, depth, field=None, cmd="walk"):
 
 # ── deep: every pointer, counted in levels ───────────────────────────────
 
-def _leads_to_struct(pointer_type):
-    """True when this pointer type points at a struct or union.
-
-    A void *, a function pointer and an int * are all skipped. Their value is
-    already on the parent's own row, and none of them has hidden members that
-    a row of their own would reveal."""
-    if pointer_type.code != gdb.TYPE_CODE_PTR:
-        return False
-    return pointer_type.target().strip_typedefs().code in _STRUCTS
-
-
 def _children(parent_expr, parent_label, parent_value):
     """Every struct one pointer away from this one.
 
@@ -258,14 +307,14 @@ def _children(parent_expr, parent_label, parent_value):
     for field in named_fields(struct_type):
         field_type = field.type.strip_typedefs()
 
-        if _leads_to_struct(field_type):
+        if leads_to_struct(field_type):
             member = parent_value[field.name]
             yield ("*((%s).%s)" % (parent_expr, field.name),
                    "%s.%s" % (parent_label, field.name),
                    member)
 
         elif field_type.code == gdb.TYPE_CODE_ARRAY:
-            if not _leads_to_struct(field_type.target().strip_typedefs()):
+            if not leads_to_struct(field_type.target().strip_typedefs()):
                 continue
             low, high = field_type.range()
             for i in range(low, high + 1):
@@ -298,7 +347,7 @@ def deep(expr, depth, cmd="deep", limit=None):
     else:
         raise NotAStruct(
             "%s: needs a struct or a pointer to one. this is %s"
-            % (cmd, value.type))
+            % (cmd, value.type), stripped, array_of_structs(stripped))
 
     out = [(root_expr, expr)]
     seen = set()
